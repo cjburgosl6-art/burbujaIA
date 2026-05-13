@@ -1,0 +1,13 @@
+Usuario: que tal?
+
+Asistente: Hola! Me alegra verte de nuevo. ¿En qué puedo ayudarte hoy?
+
+Usuario: solo probando cosas
+
+Asistente: Entiendo! Estás probando el chat, ¡genial! No hay problema en absoluto. Si necesitas algo o tienes alguna pregunta, estoy aquí para ayudarte. ¿Quieres hablar de algo en particular o simplemente seguir probando?
+
+Usuario: Hola
+
+Asistente: Hola a ti también!
+
+Parece que te gusta saludar con un "Hola" doble! No hay problema, disfruta del chat y si necesitas algo, estaré aquí para ayudarte. ¿Quieres hablar de algo en particular o simplemente seguir probando?
