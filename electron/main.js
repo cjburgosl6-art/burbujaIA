@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { fork } = require("child_process");
+const http = require("http");
 
 let bubbleWindow = null;
 let panelWindow = null;
@@ -13,6 +14,18 @@ function startBackend() {
     if (!backendProcess) {
         backendProcess = fork(path.join(__dirname, "../index.js"));
     }
+}
+
+// Función para avisar al backend que limpie el chat
+function limpiarChatBackend() {
+    const req = http.request({
+        hostname: 'localhost',
+        port: 3000,
+        path: '/clear',
+        method: 'POST'
+    });
+    req.on('error', (e) => console.log("Backend offline o ya cerrado"));
+    req.end();
 }
 
 function createBubble() {
@@ -42,6 +55,7 @@ function attachPanel() {
 
 function togglePanel() {
     if (panelWindow) {
+        limpiarChatBackend(); // Borrar al ocultar
         panelWindow.close();
         panelWindow = null;
         return;
@@ -51,17 +65,18 @@ function togglePanel() {
         width: 480, height: 620, alwaysOnTop: true, resizable: false,
         webPreferences: { 
             nodeIntegration: true, 
-            contextIsolation: false, // Permite comunicación directa
-            webSecurity: false       // Evita bloqueos de peticiones locales
+            contextIsolation: false,
+            webSecurity: false
         }
     });
 
     panelWindow.loadURL("http://localhost:3000");
-    
-    // ESTO ABRIRÁ LA CONSOLA PARA VER QUÉ FALLA
-    panelWindow.webContents.openDevTools({ mode: 'detach' });
 
-    panelWindow.on("closed", () => (panelWindow = null));
+    panelWindow.on("closed", () => {
+        panelWindow = null;
+        limpiarChatBackend(); // Borrar si se cierra de otra forma
+    });
+
     attachPanel();
 }
 

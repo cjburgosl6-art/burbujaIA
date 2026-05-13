@@ -5,7 +5,6 @@ const path = require("path");
 
 const app = express();
 app.use(express.json()); 
-app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const PORT = 3000;
@@ -45,7 +44,9 @@ app.post("/", async (req, res) => {
 
 app.post("/clear", (req, res) => {
     historial = [];
-    if (fs.existsSync(MEMORY_FILE)) fs.unlinkSync(MEMORY_FILE);
+    if (fs.existsSync(MEMORY_FILE)) {
+        try { fs.unlinkSync(MEMORY_FILE); } catch(e) {}
+    }
     res.sendStatus(200);
 });
 
@@ -103,37 +104,16 @@ app.get("/", (req, res) => {
             input { flex: 1; background: #000; color: white; border: 1px solid #444; padding: 8px; border-radius: 4px; box-sizing: border-box; }
             button { background: #c1121f; color: white; border: none; padding: 8px 12px; cursor: pointer; border-radius: 4px; font-weight: bold; }
             
-            /* MODAL AJUSTADO */
             #overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index: 99; }
             #modal { 
-                display: none; 
-                position: fixed; 
-                top: 50%; 
-                left: 50%; 
-                transform: translate(-50%, -50%); 
-                background: #1a1a1a; 
-                padding: 20px; 
-                border: 1px solid #333; 
-                border-radius: 8px; 
-                z-index: 100; 
-                width: 80%; 
-                max-width: 400px; /* Limita el ancho en pantallas grandes */
-                box-sizing: border-box; 
+                display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                background: #1a1a1a; padding: 20px; border: 1px solid #333; border-radius: 8px; z-index: 100; 
+                width: 80%; max-width: 400px; box-sizing: border-box; 
             }
-            
-            /* Ajuste específico para el input del modal */
             #modalInput { 
-                width: 100%; 
-                margin: 15px 0; 
-                display: block; 
-                box-sizing: border-box; /* Esto evita que sobresalga */
-                padding: 10px;
-                background: #000;
-                border: 1px solid #444;
-                color: white;
-                border-radius: 4px;
+                width: 100%; margin: 15px 0; display: block; box-sizing: border-box; padding: 10px;
+                background: #000; border: 1px solid #444; color: white; border-radius: 4px;
             }
-
             .item-chat { display: flex; justify-content: space-between; align-items: center; background: #222; margin-bottom: 8px; padding: 10px; border-radius: 4px; border: 1px solid #333; }
             .chat-name { cursor: pointer; flex: 1; color: #eee; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
             .btn-del { background: transparent; color: #666; font-size: 18px; padding: 0 5px; }
@@ -150,9 +130,7 @@ app.get("/", (req, res) => {
                 <button onclick="confirmSave()" style="width:100%; padding: 10px;">Guardar ahora</button>
             </div>
         </div>
-
         <div id="chat">${htmlMensajes}</div>
-        
         <div class="controls">
             <input id="input" placeholder="Escribe algo..." onkeypress="if(event.key==='Enter') enviar()">
             <button onclick="enviar()">Enviar</button>
@@ -160,9 +138,7 @@ app.get("/", (req, res) => {
             <button onclick="ver()">📂</button>
             <button onclick="borrar()">🗑</button>
         </div>
-
         <script>
-            // ... (Toda la lógica de script se mantiene igual que en la respuesta anterior) ...
             const chat = document.getElementById('chat');
             chat.scrollTop = chat.scrollHeight;
 
@@ -202,9 +178,7 @@ app.get("/", (req, res) => {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({nombre})
-                }).then(r => {
-                    if(r.ok) { closeModal(); location.reload(); }
-                });
+                }).then(r => { if(r.ok) { closeModal(); location.reload(); } });
             }
 
             function ver() {
@@ -214,10 +188,7 @@ app.get("/", (req, res) => {
                     document.getElementById('modalTitle').innerText = "Cargar conversación";
                     const container = document.getElementById('modalContent');
                     container.innerHTML = "";
-                    if(!list.length) {
-                        container.innerHTML = "<p style='color:#666;'>No hay archivos.</p>";
-                        return;
-                    }
+                    if(!list.length) { container.innerHTML = "<p style='color:#666;'>No hay archivos.</p>"; return; }
                     list.forEach(file => {
                         const div = document.createElement('div');
                         div.className = 'item-chat';
@@ -259,4 +230,4 @@ app.get("/", (req, res) => {
     `);
 });
 
-app.listen(PORT, () => console.log("Use the toggle to start using the assistant"));
+app.listen(PORT, () => console.log("Servidor en puerto " + PORT));
