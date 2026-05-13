@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<style>
+body {
+  margin: 0;
+  background: transparent;
+}
+.bubble {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: #c1121f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: system-ui;
+  font-weight: bold;
+  color: white;
+  cursor: pointer;
+  -webkit-app-region: drag;
+}
+.inner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: white;
+  color: #c1121f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+}
+</style>
+</head>
+
+<body>
+  <div class="bubble">
+    <div class="inner" id="btn">IA</div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
