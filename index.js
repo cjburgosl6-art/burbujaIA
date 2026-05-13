@@ -33,8 +33,13 @@ async function preguntarIA(mensaje) {
 
 /* --- API --- */
 app.post("/", async (req, res) => {
-    const { mensaje } = req.body;
+    const { mensaje, isSystem } = req.body;
     if (!mensaje) return res.sendStatus(400);
+    if (isSystem) {
+        historial.push("Sistema: " + mensaje);
+        fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+        return res.json({ ok: true });
+    }
     historial.push("Usuario: " + mensaje);
     const respuesta = await preguntarIA(mensaje);
     historial.push("Asistente: " + respuesta);
@@ -44,15 +49,12 @@ app.post("/", async (req, res) => {
 
 app.post("/clear", (req, res) => {
     historial = [];
-    if (fs.existsSync(MEMORY_FILE)) {
-        try { fs.unlinkSync(MEMORY_FILE); } catch(e) {}
-    }
+    if (fs.existsSync(MEMORY_FILE)) { try { fs.unlinkSync(MEMORY_FILE); } catch(e) {} }
     res.sendStatus(200);
 });
 
 app.post("/save", (req, res) => {
     const { nombre } = req.body;
-    if (!historial.length) return res.status(400).send("No hay chat");
     const safeName = (nombre || "chat").replace(/[^a-z0-9]/gi, '_') + ".md";
     fs.writeFileSync(path.join(SAVES_DIR, safeName), historial.join("\n\n"));
     res.sendStatus(200);
@@ -65,30 +67,25 @@ app.get("/conversations", (req, res) => {
 
 app.post("/load", (req, res) => {
     const { nombre } = req.body;
-    const filePath = path.join(SAVES_DIR, nombre);
-    if (fs.existsSync(filePath)) {
-        const contenido = fs.readFileSync(filePath, "utf-8");
-        historial = contenido.split("\n\n").filter(l => l.trim() !== "");
-        fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
-        res.sendStatus(200);
-    } else { res.sendStatus(404); }
+    const contenido = fs.readFileSync(path.join(SAVES_DIR, nombre), "utf-8");
+    historial = contenido.split("\n\n").filter(l => l.trim() !== "");
+    fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+    res.sendStatus(200);
 });
 
 app.post("/delete-file", (req, res) => {
-    const { nombre } = req.body;
-    const filePath = path.join(SAVES_DIR, nombre);
-    if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        res.sendStatus(200);
-    } else { res.sendStatus(404); }
+    fs.unlinkSync(path.join(SAVES_DIR, req.body.nombre));
+    res.sendStatus(200);
 });
 
 /* --- HTML --- */
 app.get("/", (req, res) => {
-    const htmlMensajes = historial.map(m => {
-        const clase = m.startsWith('Usuario') ? 'user' : '';
-        return `<div class="msg ${clase}">${m}</div>`;
-    }).join('');
+    const htmlMensajes = historial
+        .filter(m => !m.startsWith('Sistema:'))
+        .map(m => {
+            const clase = m.startsWith('Usuario') ? 'user' : '';
+            return `<div class="msg ${clase}">${m}</div>`;
+        }).join('');
 
     res.send(`
     <!DOCTYPE html>
@@ -105,55 +102,121 @@ app.get("/", (req, res) => {
             button { background: #c1121f; color: white; border: none; padding: 8px 12px; cursor: pointer; border-radius: 4px; font-weight: bold; }
             
             #overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index: 99; }
-            #modal { 
-                display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-                background: #1a1a1a; padding: 20px; border: 1px solid #333; border-radius: 8px; z-index: 100; 
-                width: 80%; max-width: 400px; box-sizing: border-box; 
-            }
-            #modalInput { 
-                width: 100%; margin: 15px 0; display: block; box-sizing: border-box; padding: 10px;
-                background: #000; border: 1px solid #444; color: white; border-radius: 4px;
-            }
+            #modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #1a1a1a; padding: 20px; border: 1px solid #333; border-radius: 8px; z-index: 100; width: 80%; max-width: 400px; box-sizing: border-box; text-align: center; }
+            .lang-btn { width: 100%; margin: 5px 0; padding: 12px; background: #222; border: 1px solid #444; color: white; cursor: pointer; border-radius: 4px; }
+            #modalInput { width: 100%; margin: 15px 0; display: block; box-sizing: border-box; padding: 10px; background: #000; border: 1px solid #444; color: white; border-radius: 4px; }
             .item-chat { display: flex; justify-content: space-between; align-items: center; background: #222; margin-bottom: 8px; padding: 10px; border-radius: 4px; border: 1px solid #333; }
-            .chat-name { cursor: pointer; flex: 1; color: #eee; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .btn-del { background: transparent; color: #666; font-size: 18px; padding: 0 5px; }
-            .btn-del:hover { color: #ff4d4d; }
+            
+            /* Estilo para botón cancelar */
+            .btn-cancelar { background: #444; margin-top: 10px; width: 100%; }
+            .btn-cancelar:hover { background: #555; }
         </style>
     </head>
     <body>
         <div id="overlay" onclick="closeModal()"></div>
         <div id="modal">
-            <h3 id="modalTitle" style="margin-top:0; color:#c1121f;">Conversaciones</h3>
+            <h3 id="modalTitle" style="margin-top:0; color:#c1121f;"></h3>
             <div id="modalContent"></div>
             <div id="modalInputContainer" style="display:none;">
-                <input id="modalInput" placeholder="Nombre del archivo...">
-                <button onclick="confirmSave()" style="width:100%; padding: 10px;">Guardar ahora</button>
+                <input id="modalInput">
+                <button id="modalConfirmBtn" onclick="confirmSave()" style="width:100%;"></button>
             </div>
+            <!-- Botón Cancelar universal para el modal -->
+            <button id="btnCancelGlobal" class="btn-cancelar" onclick="closeModal()"></button>
         </div>
+
         <div id="chat">${htmlMensajes}</div>
+        
         <div class="controls">
-            <input id="input" placeholder="Escribe algo..." onkeypress="if(event.key==='Enter') enviar()">
-            <button onclick="enviar()">Enviar</button>
+            <input id="input" onkeypress="if(event.key==='Enter') enviar()">
+            <button id="btnEnviar" onclick="enviar()"></button>
             <button onclick="abrirGuardar()">💾</button>
             <button onclick="ver()">📂</button>
             <button onclick="borrar()">🗑</button>
         </div>
+
         <script>
             const chat = document.getElementById('chat');
-            chat.scrollTop = chat.scrollHeight;
+            const textos = {
+                'Español': { 
+                    send: 'Enviar', placeholder: 'Escribe algo...', pensar: 'Pensando...', 
+                    saveTitle: 'Guardar conversación', saveBtn: 'Guardar ahora', 
+                    loadTitle: 'Cargar conversación', delConfirm: '¿Eliminar?', 
+                    clearConfirm: '¿Borrar chat actual?', noFiles: 'No hay archivos',
+                    cancel: 'Cancelar'
+                },
+                'Inglés': { 
+                    send: 'Send', placeholder: 'Type something...', pensar: 'Thinking...', 
+                    saveTitle: 'Save conversation', saveBtn: 'Save now', 
+                    loadTitle: 'Load conversation', delConfirm: 'Delete?', 
+                    clearConfirm: 'Clear current chat?', noFiles: 'No files',
+                    cancel: 'Cancel'
+                },
+                'Francés': { 
+                    send: 'Envoyer', placeholder: 'Écrivez quelque chose...', pensar: 'En pensant...', 
+                    saveTitle: 'Enregistrer la conversation', saveBtn: 'Enregistrer', 
+                    loadTitle: 'Charger la conversation', delConfirm: 'Supprimer?', 
+                    clearConfirm: 'Effacer le chat?', noFiles: 'Pas de fichiers',
+                    cancel: 'Annuler'
+                }
+            };
+
+            let idiomaActual = localStorage.getItem('chat_lang') || 'Español';
+
+            function aplicarIdioma(lang) {
+                idiomaActual = lang;
+                localStorage.setItem('chat_lang', lang);
+                const t = textos[lang];
+                document.getElementById('btnEnviar').innerText = t.send;
+                document.getElementById('input').placeholder = t.placeholder;
+                document.getElementById('modalConfirmBtn').innerText = t.saveBtn;
+                document.getElementById('btnCancelGlobal').innerText = t.cancel;
+            }
+
+            window.onload = () => {
+                aplicarIdioma(idiomaActual);
+                if(${historial.length === 0}) pedirIdioma();
+                chat.scrollTop = chat.scrollHeight;
+            };
+
+            function pedirIdioma() {
+                document.getElementById('overlay').style.display = 'block';
+                document.getElementById('btnCancelGlobal').style.display = 'none'; // No se puede cancelar el idioma inicial
+                const modal = document.getElementById('modal');
+                modal.style.display = 'block';
+                document.getElementById('modalTitle').innerText = "Selecciona Idioma";
+                const content = document.getElementById('modalContent');
+                content.innerHTML = \`
+                    <button class="lang-btn" onclick="setLanguage('Español')">🇪🇸 Español</button>
+                    <button class="lang-btn" onclick="setLanguage('Inglés')">🇺🇸 English</button>
+                    <button class="lang-btn" onclick="setLanguage('Francés')">🇫🇷 Français</button>
+                \`;
+            }
+
+            function setLanguage(lang) {
+                aplicarIdioma(lang);
+                const promptMsg = "A partir de ahora, respóndeme siempre en idioma " + lang + ".";
+                fetch('/', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ mensaje: promptMsg, isSystem: true })
+                }).then(() => closeModal());
+            }
 
             function closeModal() {
                 document.getElementById('overlay').style.display = 'none';
                 document.getElementById('modal').style.display = 'none';
                 document.getElementById('modalContent').innerHTML = '';
                 document.getElementById('modalInputContainer').style.display = 'none';
+                document.getElementById('btnCancelGlobal').style.display = 'block'; 
             }
 
             function enviar() {
                 const input = document.getElementById('input');
+                const t = textos[idiomaActual];
                 const mensaje = input.value;
                 if(!mensaje) return;
-                input.value = 'Pensando...';
+                input.value = t.pensar;
                 input.disabled = true;
                 fetch('/', {
                     method: 'POST',
@@ -163,14 +226,39 @@ app.get("/", (req, res) => {
             }
 
             function abrirGuardar() {
+                const t = textos[idiomaActual];
                 document.getElementById('overlay').style.display = 'block';
                 document.getElementById('modal').style.display = 'block';
-                document.getElementById('modalTitle').innerText = "Guardar conversación";
+                document.getElementById('modalTitle').innerText = t.saveTitle;
                 document.getElementById('modalContent').innerHTML = "";
                 document.getElementById('modalInputContainer').style.display = 'block';
+                document.getElementById('btnCancelGlobal').style.display = 'block';
                 setTimeout(() => document.getElementById('modalInput').focus(), 50);
             }
 
+            function ver() {
+                const t = textos[idiomaActual];
+                fetch('/conversations').then(r => r.json()).then(list => {
+                    document.getElementById('overlay').style.display = 'block';
+                    document.getElementById('modal').style.display = 'block';
+                    document.getElementById('modalTitle').innerText = t.loadTitle;
+                    document.getElementById('btnCancelGlobal').style.display = 'block';
+                    const container = document.getElementById('modalContent');
+                    container.innerHTML = "";
+                    if(!list.length) { container.innerHTML = "<p style='color:#666;'>"+t.noFiles+"</p>"; return; }
+                    list.forEach(file => {
+                        const div = document.createElement('div');
+                        div.className = 'item-chat';
+                        div.innerHTML = \`
+                            <span style="cursor:pointer;flex:1;text-align:left;" onclick="cargarArchivo('\${file}')">\${file}</span>
+                            <button style="background:transparent;color:#666;" onclick="borrarArchivo('\${file}')">🗑</button>
+                        \`;
+                        container.appendChild(div);
+                    });
+                });
+            }
+
+            // ... funciones de carga, borrado y confirmación iguales ...
             function confirmSave() {
                 const nombre = document.getElementById('modalInput').value;
                 if(!nombre) return;
@@ -180,27 +268,6 @@ app.get("/", (req, res) => {
                     body: JSON.stringify({nombre})
                 }).then(r => { if(r.ok) { closeModal(); location.reload(); } });
             }
-
-            function ver() {
-                fetch('/conversations').then(r => r.json()).then(list => {
-                    document.getElementById('overlay').style.display = 'block';
-                    document.getElementById('modal').style.display = 'block';
-                    document.getElementById('modalTitle').innerText = "Cargar conversación";
-                    const container = document.getElementById('modalContent');
-                    container.innerHTML = "";
-                    if(!list.length) { container.innerHTML = "<p style='color:#666;'>No hay archivos.</p>"; return; }
-                    list.forEach(file => {
-                        const div = document.createElement('div');
-                        div.className = 'item-chat';
-                        div.innerHTML = \`
-                            <span class="chat-name" onclick="cargarArchivo('\${file}')">\${file}</span>
-                            <button class="btn-del" onclick="borrarArchivo('\${file}')">🗑</button>
-                        \`;
-                        container.appendChild(div);
-                    });
-                });
-            }
-
             function cargarArchivo(nombre) {
                 fetch('/load', {
                     method: 'POST',
@@ -208,9 +275,9 @@ app.get("/", (req, res) => {
                     body: JSON.stringify({nombre})
                 }).then(() => location.reload());
             }
-
             function borrarArchivo(nombre) {
-                if(confirm("¿Eliminar " + nombre + "?")) {
+                const t = textos[idiomaActual];
+                if(confirm(t.delConfirm + " " + nombre)) {
                     fetch('/delete-file', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
@@ -218,9 +285,9 @@ app.get("/", (req, res) => {
                     }).then(() => ver());
                 }
             }
-
             function borrar() {
-                if(confirm("¿Borrar chat actual?")) {
+                const t = textos[idiomaActual];
+                if(confirm(t.clearConfirm)) {
                     fetch('/clear', {method:'POST'}).then(() => location.reload());
                 }
             }
@@ -230,4 +297,4 @@ app.get("/", (req, res) => {
     `);
 });
 
-app.listen(PORT, () => console.log("Servidor en puerto " + PORT));
+app.listen(PORT, () => console.log("Use the toggle button to open the chat panel."));
