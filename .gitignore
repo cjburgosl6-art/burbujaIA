@@ -1,1 +1,7 @@
+# Ignore dependencies
 node_modules
+
+# App data and conversations
+memory.json
+conversations/
+autosaves/
