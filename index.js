@@ -15,7 +15,7 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
 
-/* --- RUTAS API (Sin cambios significativos) --- */
+/* --- API --- */
 app.post("/", async (req, res) => {
     const { mensaje, isSystem } = req.body;
     if (isSystem) {
@@ -81,31 +81,53 @@ app.get("/", (req, res) => {
         <meta charset="UTF-8">
         <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
         <style>
-            :root { --primary: #c1121f; --bg: #0f0f0f; --panel: #1a1a1a; --text: #eee; }
-            body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; }
-            #sidebar { width: 300px; background: var(--panel); border-right: 1px solid #333; display: flex; flex-direction: column; transition: 0.3s; position: absolute; left: -300px; height: 100%; z-index: 1000; }
+            /* Variables de Tema - Por defecto Oscuro */
+            :root { 
+                --primary: #c1121f; --bg: #0f0f0f; --panel: #1a1a1a; --text: #eee; 
+                --input-bg: #000; --msg-user: #222; --topbar: #111; --border: #333;
+            }
+
+            /* Variables Modo Claro (Azul) */
+            body.light-mode {
+                --primary: #0077b6; --bg: #f0f9ff; --panel: #ffffff; --text: #023e8a; 
+                --input-bg: #fff; --msg-user: #e0f2fe; --topbar: #caf0f8; --border: #ade8f4;
+            }
+
+            body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; transition: 0.3s; }
+            
+            #sidebar { width: 300px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: 0.3s; position: absolute; left: -300px; height: 100%; z-index: 1000; }
             #sidebar.open { left: 0; }
-            .sidebar-header { padding: 20px; border-bottom: 1px solid #333; font-weight: bold; display: flex; justify-content: space-between; }
+            .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); font-weight: bold; display: flex; justify-content: space-between; }
+            
             .file-list { flex: 1; overflow-y: auto; padding: 10px; }
             .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 14px; border: 1px solid transparent; }
-            .file-item:hover { background: #252525; }
-            .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; }
-            .tag-manual { background: var(--primary); color: white; }
+            .file-item:hover { background: rgba(0,0,0,0.1); }
+            
+            .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; color: white; }
+            .tag-manual { background: var(--primary); }
+            
             #main { flex: 1; display: flex; flex-direction: column; width: 100%; }
             #chat { flex: 1; overflow-y: auto; padding: 20px; }
-            .msg { margin-bottom: 20px; padding: 15px; border-radius: 8px; background: var(--panel); border-left: 4px solid var(--primary); max-width: 85%; }
-            .user { border-left-color: #555; background: #222; margin-left: auto; }
-            pre { background: #000; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid #333; }
+            
+            .msg { margin-bottom: 20px; padding: 15px; border-radius: 8px; background: var(--panel); border-left: 4px solid var(--primary); max-width: 85%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+            .user { border-left-color: #555; background: var(--msg-user); margin-left: auto; }
+            
+            pre { background: #000; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); color: #fff; }
+            .light-mode pre { background: #f8f9fa; color: #333; }
             code { font-family: 'Consolas', monospace; color: #ff79c6; }
-            .top-bar { padding: 10px 20px; background: #111; display: flex; align-items: center; gap: 15px; border-bottom: 1px solid #333; }
-            .controls { display: flex; gap: 10px; padding: 20px; background: #111; border-top: 1px solid #333; }
-            input { flex: 1; background: #000; color: white; border: 1px solid #444; padding: 12px; border-radius: 8px; }
+            .light-mode code { color: #d63384; }
+
+            .top-bar { padding: 10px 20px; background: var(--topbar); display: flex; align-items: center; gap: 15px; border-bottom: 1px solid var(--border); }
+            .controls { display: flex; gap: 10px; padding: 20px; background: var(--topbar); border-top: 1px solid var(--border); }
+            
+            input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
             button { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px; font-weight: bold; }
-            #overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index: 999; }
-            .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 30px; border-radius: 12px; z-index: 1001; width: 90%; max-width: 400px; text-align: center; border: 1px solid #333; }
+            
+            #overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index: 999; }
+            .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 30px; border-radius: 12px; z-index: 1001; width: 90%; max-width: 400px; text-align: center; border: 1px solid var(--border); color: var(--text); }
         </style>
     </head>
-    <body>
+    <body class="">
         <div id="overlay" onclick="closeAll()"></div>
 
         <div id="sidebar">
@@ -120,6 +142,7 @@ app.get("/", (req, res) => {
             <div class="top-bar">
                 <div style="cursor:pointer; font-size:24px;" onclick="toggleMenu()">☰</div>
                 <div style="flex:1; font-weight:bold; color:var(--primary)">Llama3 AI</div>
+                <button onclick="toggleTheme()" id="themeBtn">☀️</button>
                 <button onclick="abrirGuardarManual()">💾</button>
                 <button onclick="borrarActual()" style="background:#333">🗑</button>
             </div>
@@ -143,42 +166,31 @@ app.get("/", (req, res) => {
             <h3 id="txtSaveTitle">Guardar</h3>
             <input id="nombreArchivo" style="width:100%; margin-bottom:15px; box-sizing:border-box;">
             <button id="btnConfirmSave" onclick="confirmarGuardadoManual()" style="width:100%"></button>
-            <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444;"></button>
+            <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
         </div>
 
         <script>
             let rawHistorial = ${JSON.stringify(historial)};
             const textos = {
-                'Español': { 
-                    send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', 
-                    historial: 'HISTORIAL', saveTitle: 'Guardar conversación', 
-                    savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', 
-                    cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?' 
-                },
-                'Inglés': { 
-                    send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', 
-                    historial: 'HISTORY', saveTitle: 'Save conversation', 
-                    savePlaceholder: 'File name', confirmSave: 'Save now', 
-                    cancel: 'Cancel', deleteConfirm: 'Delete file?' 
-                },
-                'Francés': { 
-                    send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', 
-                    historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', 
-                    savePlaceholder: 'Nom du fichier', confirmSave: 'Enregistrer', 
-                    cancel: 'Annuler', deleteConfirm: 'Supprimer?' 
-                }
+                'Español': { send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?' },
+                'Inglés': { send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?' },
+                'Francés': { send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom du fichier', confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?' }
             };
+
+            function toggleTheme() {
+                const body = document.body;
+                body.classList.toggle('light-mode');
+                const isLight = body.classList.contains('light-mode');
+                localStorage.setItem('theme', isLight ? 'light' : 'dark');
+                document.getElementById('themeBtn').innerText = isLight ? '🌙' : '☀️';
+            }
 
             function aplicarTraducciones() {
                 const lang = localStorage.getItem('idioma') || 'Español';
                 const t = textos[lang];
-                
-                // Interfaz principal
                 document.getElementById('btnEnviar').innerText = t.send;
                 document.getElementById('input').placeholder = t.placeholder;
                 document.getElementById('txtHistorialTitle').innerText = t.historial;
-                
-                // Modal Guardar
                 document.getElementById('txtSaveTitle').innerText = t.saveTitle;
                 document.getElementById('nombreArchivo').placeholder = t.savePlaceholder;
                 document.getElementById('btnConfirmSave').innerText = t.confirmSave;
@@ -268,6 +280,8 @@ app.get("/", (req, res) => {
             function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
 
             window.onload = () => {
+                // Cargar tema guardado
+                if(localStorage.getItem('theme') === 'light') toggleTheme();
                 aplicarTraducciones();
                 renderChat();
                 if(rawHistorial.length === 0) {
