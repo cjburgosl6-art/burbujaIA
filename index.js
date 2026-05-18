@@ -25,7 +25,7 @@ app.post("/", async (req, res) => {
         try {
             const r = await axios.post("http://localhost:11434/api/generate", {
                 model: "llama3",
-                prompt: historial.join("\n") + "\nUsuario: " + mensaje + "\nAsistente:",
+                prompt: historial.join("\n") + "\nAsistente:",
                 stream: false
             });
             historial.push("Asistente: " + r.data.response.trim());
@@ -81,16 +81,14 @@ app.get("/", (req, res) => {
         <meta charset="UTF-8">
         <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
         <style>
-            /* Variables de Tema - Por defecto Oscuro */
             :root { 
                 --primary: #c1121f; --bg: #0f0f0f; --panel: #1a1a1a; --text: #eee; 
                 --input-bg: #000; --msg-user: #222; --topbar: #111; --border: #333;
             }
 
-            /* Variables Modo Claro (Azul) */
             body.light-mode {
-                --primary: #0077b6; --bg: #f0f9ff; --panel: #ffffff; --text: #023e8a; 
-                --input-bg: #fff; --msg-user: #e0f2fe; --topbar: #caf0f8; --border: #ade8f4;
+                --primary: #0077b6 !important; --bg: #f0f9ff !important; --panel: #ffffff !important; --text: #023e8a !important; 
+                --input-bg: #fff !important; --msg-user: #e0f2fe !important; --topbar: #caf0f8 !important; --border: #ade8f4 !important;
             }
 
             body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; transition: 0.3s; }
@@ -103,31 +101,27 @@ app.get("/", (req, res) => {
             .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 14px; border: 1px solid transparent; }
             .file-item:hover { background: rgba(0,0,0,0.1); }
             
-            .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; color: white; }
-            .tag-manual { background: var(--primary); }
+            #main { flex: 1; display: flex; flex-direction: column; width: 100%; position: relative; }
+            #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
             
-            #main { flex: 1; display: flex; flex-direction: column; width: 100%; }
-            #chat { flex: 1; overflow-y: auto; padding: 20px; }
+            .msg { padding: 15px; border-radius: 8px; background: var(--panel); border-left: 4px solid var(--primary); max-width: 85%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+            .user { border-left: none; border-right: 4px solid #555; background: var(--msg-user); margin-left: auto; }
             
-            .msg { margin-bottom: 20px; padding: 15px; border-radius: 8px; background: var(--panel); border-left: 4px solid var(--primary); max-width: 85%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-            .user { border-left-color: #555; background: var(--msg-user); margin-left: auto; }
-            
-            pre { background: #000; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); color: #fff; }
-            .light-mode pre { background: #f8f9fa; color: #333; }
-            code { font-family: 'Consolas', monospace; color: #ff79c6; }
-            .light-mode code { color: #d63384; }
+            .thinking { font-style: italic; opacity: 0.7; animation: blink 1s infinite; }
+            @keyframes blink { 50% { opacity: 0.3; } }
 
-            .top-bar { padding: 10px 20px; background: var(--topbar); display: flex; align-items: center; gap: 15px; border-bottom: 1px solid var(--border); }
+            .top-bar { padding: 10px 20px; background: var(--topbar); display: flex; align-items: center; gap: 15px; border-bottom: 1px solid var(--border); min-height: 50px; }
             .controls { display: flex; gap: 10px; padding: 20px; background: var(--topbar); border-top: 1px solid var(--border); }
             
             input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
-            button { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px; font-weight: bold; }
-            
-            #overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index: 999; }
-            .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 30px; border-radius: 12px; z-index: 1001; width: 90%; max-width: 400px; text-align: center; border: 1px solid var(--border); color: var(--text); }
+            button { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px; font-weight: bold; transition: 0.2s; }
+            button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+            #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; }
+            .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 30px; border-radius: 12px; z-index: 2001; width: 320px; text-align: center; border: 1px solid var(--border); color: var(--text); }
         </style>
     </head>
-    <body class="">
+    <body>
         <div id="overlay" onclick="closeAll()"></div>
 
         <div id="sidebar">
@@ -153,7 +147,6 @@ app.get("/", (req, res) => {
             </div>
         </div>
 
-        <!-- Modal Idioma -->
         <div id="modalIdioma" class="modal">
             <h2 style="color:var(--primary)">Language / Idioma</h2>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Español')">🇪🇸 Español</button>
@@ -161,7 +154,6 @@ app.get("/", (req, res) => {
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Francés')">🇫🇷 Français</button>
         </div>
 
-        <!-- Modal Guardar -->
         <div id="modalGuardar" class="modal">
             <h3 id="txtSaveTitle">Guardar</h3>
             <input id="nombreArchivo" style="width:100%; margin-bottom:15px; box-sizing:border-box;">
@@ -197,12 +189,6 @@ app.get("/", (req, res) => {
                 document.getElementById('btnCancelSave').innerText = t.cancel;
             }
 
-            function toggleMenu() {
-                const sb = document.getElementById('sidebar');
-                sb.classList.toggle('open');
-                if(sb.classList.contains('open')) cargarArchivos();
-            }
-
             function renderChat() {
                 const chatDiv = document.getElementById('chat');
                 chatDiv.innerHTML = rawHistorial
@@ -215,48 +201,29 @@ app.get("/", (req, res) => {
                 chatDiv.scrollTop = chatDiv.scrollHeight;
             }
 
-            async function cargarArchivos() {
-                const res = await fetch('/files');
-                const files = await res.json();
-                const list = document.getElementById('fileList');
-                list.innerHTML = "";
-                files.reverse().forEach(f => {
-                    const item = document.createElement('div');
-                    item.className = 'file-item';
-                    item.innerHTML = \`
-                        <span class="tag \${f.type === 'manual' ? 'tag-manual' : ''}">\${f.type}</span>
-                        <span style="flex:1; cursor:pointer" onclick="cargarFile('\${f.name}', '\${f.type}')">\${f.name}</span>
-                        <span style="cursor:pointer; color:#666" onclick="borrarFile('\${f.name}', '\${f.type}')">🗑</span>
-                    \`;
-                    list.appendChild(item);
-                });
-            }
-
-            async function cargarFile(name, type) {
-                await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, type}) });
-                location.reload();
-            }
-
-            async function borrarFile(name, type) {
+            async function enviar() {
+                const input = document.getElementById('input');
+                const chatDiv = document.getElementById('chat');
                 const lang = localStorage.getItem('idioma') || 'Español';
-                if(confirm(textos[lang].deleteConfirm)) {
-                    await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, type}) });
-                    cargarArchivos();
-                }
-            }
+                
+                if(!input.value || input.disabled) return;
+                const msg = input.value;
+                
+                // 1. Mostrar usuario inmediatamente
+                rawHistorial.push("Usuario: " + msg);
+                renderChat();
+                
+                // 2. Estado pensando
+                input.value = "";
+                input.disabled = true;
+                const tempMsg = document.createElement('div');
+                tempMsg.className = 'msg thinking';
+                tempMsg.innerText = textos[lang].pensando;
+                chatDiv.appendChild(tempMsg);
+                chatDiv.scrollTop = chatDiv.scrollHeight;
 
-            function abrirGuardarManual() {
-                document.getElementById('overlay').style.display = 'block';
-                document.getElementById('modalGuardar').style.display = 'block';
-                setTimeout(() => document.getElementById('nombreArchivo').focus(), 50);
-            }
-
-            async function confirmarGuardadoManual() {
-                const nombre = document.getElementById('nombreArchivo').value;
-                if(!nombre) return;
-                await fetch('/save-manual', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nombre}) });
-                closeAll();
-                toggleMenu();
+                await fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: msg }) });
+                location.reload();
             }
 
             function setLang(lang) {
@@ -265,26 +232,38 @@ app.get("/", (req, res) => {
                 .then(() => location.reload());
             }
 
-            async function enviar() {
-                const input = document.getElementById('input');
-                const lang = localStorage.getItem('idioma') || 'Español';
-                if(!input.value || input.disabled) return;
-                const msg = input.value;
-                input.value = textos[lang].pensando;
-                input.disabled = true;
-                await fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: msg }) });
-                location.reload();
+            function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
+            function abrirGuardarManual() { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; }
+            function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
+            function borrarActual() { if(confirm("Clear chat?")) fetch('/clear', {method:'POST'}).then(() => { localStorage.removeItem('idioma'); location.reload(); }); }
+
+            async function cargarArchivos() {
+                const res = await fetch('/files');
+                const files = await res.json();
+                const list = document.getElementById('fileList');
+                list.innerHTML = files.reverse().map(f => \`
+                    <div class="file-item">
+                        <span class="tag \${f.type === 'manual' ? 'tag-manual' : ''}">\${f.type}</span>
+                        <span style="flex:1; cursor:pointer" onclick="cargarFile('\${f.name}', '\${f.type}')">\${f.name}</span>
+                        <span style="cursor:pointer" onclick="borrarFile('\${f.name}', '\${f.type}')">🗑</span>
+                    </div>\`).join('');
             }
 
-            function borrarActual() { if(confirm("Clear chat?")) fetch('/clear', {method:'POST'}).then(() => location.reload()); }
-            function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
+            async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
+            async function borrarFile(n, t) { if(confirm("Delete?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
+            async function confirmarGuardadoManual() {
+                const n = document.getElementById('nombreArchivo').value;
+                if(!n) return;
+                await fetch('/save-manual', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nombre:n}) });
+                closeAll();
+            }
 
             window.onload = () => {
-                // Cargar tema guardado
-                if(localStorage.getItem('theme') === 'light') toggleTheme();
+                if(localStorage.getItem('theme') === 'light') document.body.classList.add('light-mode');
+                document.getElementById('themeBtn').innerText = document.body.classList.contains('light-mode') ? '🌙' : '☀️';
                 aplicarTraducciones();
                 renderChat();
-                if(rawHistorial.length === 0) {
+                if(rawHistorial.length === 0 || !localStorage.getItem('idioma')) {
                     document.getElementById('overlay').style.display = 'block';
                     document.getElementById('modalIdioma').style.display = 'block';
                 }
