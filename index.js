@@ -231,8 +231,8 @@ app.get("/", (req, res) => {
             <div id="chat"></div>
             
             <div class="quick-actions">
-                <button class="action-btn" onclick="enviarAccion('resumir')">📝 Resumir</button>
-                <button class="action-btn" onclick="enviarAccion('corregir')">🛠 Corregir</button>
+                <button id="btnActionResumir" class="action-btn" onclick="enviarAccion('resumir')">📝 Resumir</button>
+                <button id="btnActionCorregir" class="action-btn" onclick="enviarAccion('corregir')">🛠 Corregir</button>
             </div>
 
             <div class="controls">
@@ -269,21 +269,24 @@ app.get("/", (req, res) => {
                     saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', 
                     cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?',
                     infoTitle: 'Capacidad de Memoria',
-                    infoBody: 'El marcador superior te muestra la siguiente información:\\n\\n* **🔥 Gasto Actual**: Cantidad exacta de tokens procesados y gastados en este último mensaje.\\n* **🧠 Límite Estático (8192)**: Indica el tamaño máximo absoluto de la memoria del modelo Llama3. Al superar este umbral, el sistema comenzará a olvidar de forma automática los mensajes más antiguos del chat.'
+                    infoBody: 'El marcador superior te muestra la siguiente información:\\n\\n* **🔥 Gasto Actual**: Cantidad exacta de tokens procesados y gastados en este último mensaje.\\n* **🧠 Límite Estático (8192)**: Indica el tamaño máximo absoluto de la memoria del modelo Llama3. Al superar este umbral, el sistema comenzará a olvidar de forma automática los mensajes más antiguos del chat.',
+                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir'
                 },
                 'Inglés': { 
                     send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', 
                     saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', 
                     cancel: 'Cancel', deleteConfirm: 'Delete file?',
                     infoTitle: 'Memory Capacity',
-                    infoBody: 'The top counter displays the following information:\\n\\n* **🔥 Current Spend**: The exact amount of tokens processed and used in this latest message.\\n* **🧠 Static Limit (8192)**: Represents the absolute maximum memory size for Llama3. Once your chat history exceeds this volume, the AI will automatically discard the oldest messages to process new responses.'
+                    infoBody: 'The top counter displays the following information:\\n\\n* **🔥 Current Spend**: The exact amount of tokens processed and used in this latest message.\\n* **🧠 Static Limit (8192)**: Represents the absolute maximum memory size for Llama3. Once your chat history exceeds this volume, the AI will automatically discard the oldest messages to process new responses.',
+                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error'
                 },
                 'Francés': { 
                     send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', 
                     saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', 
                     cancel: 'Annuler', deleteConfirm: 'Supprimer?',
                     infoTitle: 'Capacité Mémoire',
-                    infoBody: 'Le marqueur supérieur affiche les informations suivantes :\\n\\n* **🔥 Utilisation Actuelle**: Nombre exact de tokens traités et consommés pour ce dernier message.\\n* **🧠 Limite Statique (8192)**: Indique la taille maximale absolue de la mémoire du modelo Llama3. Au-delà de ce seuil, le système oubliera automáticamente les messages les plus anciens.'
+                    infoBody: 'Le marqueur supérieur affiche les informations suivantes :\\n\\n* **🔥 Utilisation Actuelle**: Nombre exact de tokens traités et consommés pour ce dernier message.\\n* **🧠 Linite Statique (8192)**: Indique la taille maximale absolue de la mémoire du modelo Llama3. Au-delà de ce seuil, le système oubliera automáticamente les messages les plus anciens.',
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger'
                 }
             };
 
@@ -309,6 +312,9 @@ app.get("/", (req, res) => {
                 
                 document.getElementById('txtInfoTitle').innerText = t.infoTitle;
                 document.getElementById('txtInfoBody').innerHTML = marked.parse(t.infoBody);
+                
+                document.getElementById('btnActionResumir').innerText = t.btnResumir;
+                document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
             }
 
             function abrirInfoTokens() {
