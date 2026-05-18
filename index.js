@@ -275,3 +275,5 @@ app.get("/", (req, res) => {
 });
 
 app.listen(PORT, () => console.log("Use the toggle button to open the chat panel."));
+
+// Fin del código.
