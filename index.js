@@ -22,15 +22,21 @@ app.post("/", async (req, res) => {
         historial.push("Sistema: " + mensaje);
     } else {
         historial.push("Usuario: " + mensaje);
+        
+        const ahora = new Date();
+        const fechaTxt = ahora.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const horaTxt = ahora.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        const contextoTemporal = `Contexto: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. `;
+
         try {
             const r = await axios.post("http://localhost:11434/api/generate", {
                 model: "llama3",
-                prompt: historial.join("\n") + "\nAsistente:",
+                prompt: contextoTemporal + historial.join("\n") + "\nAsistente:",
                 stream: false
             });
             historial.push("Asistente: " + r.data.response.trim());
-            const fecha = new Date().toISOString().slice(0, 10);
-            fs.writeFileSync(path.join(AUTO_DIR, `auto_${fecha}.md`), historial.join("\n\n"));
+            const fechaArchivo = ahora.toISOString().slice(0, 10);
+            fs.writeFileSync(path.join(AUTO_DIR, `auto_${fechaArchivo}.md`), historial.join("\n\n"));
         } catch (e) { historial.push("Asistente: Error al conectar con Ollama."); }
     }
     fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
@@ -139,7 +145,7 @@ app.get("/", (req, res) => {
             <div class="top-bar">
                 <div style="cursor:pointer; font-size:24px;" onclick="toggleMenu()">☰</div>
                 <div style="flex:1; font-weight:bold; color:var(--primary)">Llama3 AI</div>
-                <button onclick="toggleTheme()" id="themeBtn">☀️</button>
+                <button onclick="toggleTheme()" id="themeBtn">🌙</button>
                 <button onclick="abrirGuardarManual()">💾</button>
                 <button onclick="borrarActual()" style="background:#333">🗑</button>
             </div>
@@ -166,19 +172,24 @@ app.get("/", (req, res) => {
 
         <script>
             let rawHistorial = ${JSON.stringify(historial)};
+            
+            function toggleTheme() {
+                const body = document.body;
+                const btn = document.getElementById('themeBtn');
+                body.classList.toggle('light-mode');
+                
+                const isLight = body.classList.contains('light-mode');
+                localStorage.setItem('theme', isLight ? 'light' : 'dark');
+                
+                // Cambio solicitado: Sol para modo claro, Luna para modo oscuro
+                btn.innerText = isLight ? '☀️' : '🌙';
+            }
+
             const textos = {
                 'Español': { send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?' },
                 'Inglés': { send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?' },
                 'Francés': { send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?' }
             };
-
-            function toggleTheme() {
-                const body = document.body;
-                body.classList.toggle('light-mode');
-                const isLight = body.classList.contains('light-mode');
-                localStorage.setItem('theme', isLight ? 'light' : 'dark');
-                document.getElementById('themeBtn').innerText = isLight ? '🌙' : '☀️';
-            }
 
             function aplicarTraducciones() {
                 const lang = localStorage.getItem('idioma') || 'Español';
@@ -208,13 +219,10 @@ app.get("/", (req, res) => {
                 const input = document.getElementById('input');
                 const chatDiv = document.getElementById('chat');
                 const lang = localStorage.getItem('idioma') || 'Español';
-                
                 if(!input.value || input.disabled) return;
                 const msg = input.value;
-                
                 rawHistorial.push("Usuario: " + msg);
                 renderChat();
-                
                 input.value = "";
                 input.disabled = true;
                 const tempMsg = document.createElement('div');
@@ -222,7 +230,6 @@ app.get("/", (req, res) => {
                 tempMsg.innerText = textos[lang].pensando;
                 chatDiv.appendChild(tempMsg);
                 chatDiv.scrollTop = chatDiv.scrollHeight;
-
                 await fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: msg }) });
                 location.reload();
             }
@@ -232,18 +239,14 @@ app.get("/", (req, res) => {
                 const files = await res.json();
                 const list = document.getElementById('fileList');
                 list.innerHTML = ""; 
-                
                 files.reverse().forEach(f => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
                     item.innerHTML = \`
                         <span class="tag \${f.type === 'manual' ? 'tag-manual' : ''}">\${f.type}</span>
                         <span style="flex:1; cursor:pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" 
-                              onclick="cargarFile('\${f.name}', '\${f.type}')">
-                            \${f.name}
-                        </span>
-                        <span style="cursor:pointer; padding-left:10px;" onclick="borrarFile('\${f.name}', '\${f.type}')">🗑</span>
-                    \`;
+                              onclick="cargarFile('\${f.name}', '\${f.type}')">\${f.name}</span>
+                        <span style="cursor:pointer; padding-left:10px;" onclick="borrarFile('\${f.name}', '\${f.type}')">🗑</span>\`;
                     list.appendChild(item);
                 });
             }
@@ -268,8 +271,14 @@ app.get("/", (req, res) => {
             }
 
             window.onload = () => {
-                if(localStorage.getItem('theme') === 'light') document.body.classList.add('light-mode');
-                document.getElementById('themeBtn').innerText = document.body.classList.contains('light-mode') ? '🌙' : '☀️';
+                const savedTheme = localStorage.getItem('theme');
+                const btn = document.getElementById('themeBtn');
+                if(savedTheme === 'light') {
+                    document.body.classList.add('light-mode');
+                    btn.innerText = '☀️';
+                } else {
+                    btn.innerText = '🌙';
+                }
                 aplicarTraducciones();
                 renderChat();
                 if(rawHistorial.length === 0 || !localStorage.getItem('idioma')) {
