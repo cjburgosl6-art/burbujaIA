@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const { encode } = require("gpt-3-encoder");
 
 const app = express();
 app.use(express.json()); 
@@ -14,33 +15,108 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 [SAVES_DIR, AUTO_DIR].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); });
 
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
+let systemPrompt = "Eres un asistente de IA útil y conciso.";
+
+// Función interna para calcular el gasto exacto del último mensaje visible de la IA (ignora configuración del sistema)
+function calcularUltimoGastoTokens() {
+    const historialVisible = historial.filter(m => !m.startsWith("Sistema:"));
+    if (historialVisible.length === 0) return 0;
+    
+    const copiaHistorial = [...historialVisible];
+    const ultimaRespuesta = copiaHistorial.pop() || "";
+    
+    const contenidoIA = ultimaRespuesta.startsWith("Asistente: ") ? ultimaRespuesta.replace("Asistente: ", "") : ultimaRespuesta;
+    return Math.ceil(contenidoIA.length / 4) || 0;
+}
+
+// Función para calcular el peso total acumulado en el historial completo (incluye prompts del sistema)
+function calcularTokensTotalesHistorial() {
+    if (historial.length === 0) return 0;
+    const textoCompleto = historial.join("\n");
+    return Math.ceil(textoCompleto.length / 4) || 0;
+}
 
 /* --- API --- */
 app.post("/", async (req, res) => {
-    const { mensaje, isSystem } = req.body;
+    const { mensaje, isSystem, newSystemPrompt, accion } = req.body;
+    
+    if (newSystemPrompt) {
+        systemPrompt = newSystemPrompt;
+        return res.json({ ok: true });
+    }
+
     if (isSystem) {
         historial.push("Sistema: " + mensaje);
-    } else {
-        historial.push("Usuario: " + mensaje);
-        
-        const ahora = new Date();
-        const fechaTxt = ahora.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-        const horaTxt = ahora.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-        const contextoTemporal = `Contexto: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. `;
+        fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+        return res.json({ ok: true });
+    }
 
-        try {
-            const r = await axios.post("http://localhost:11434/api/generate", {
+    let mensajeFinal = mensaje;
+    if (accion === 'resumir') mensajeFinal = "Haz un resumen muy breve de nuestra conversación hasta ahora.";
+    if (accion === 'corregir') mensajeFinal = "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
+
+    historial.push("Usuario: " + mensajeFinal);
+    
+    // Instrucción pasiva para evitar que la IA repita la fecha constantemente en sus respuestas
+    const ahora = new Date();
+    const fechaTxt = ahora.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const horaTxt = ahora.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const instruccionesConFecha = `${systemPrompt}\n[Información del sistema: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. Usa estos datos únicamente si el usuario te pregunta explícitamente por el tiempo o la fecha actual]`;
+
+    const textoCompletoHistorial = instruccionesConFecha + "\n\n" + historial.join("\n") + "\nAsistente:";
+    const tokensTotalesAntes = encode(textoCompletoHistorial).length;
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('X-Tokens-Total-Antes', tokensTotalesAntes);
+
+    try {
+        const response = await axios({
+            method: 'post',
+            url: "http://localhost:11434/api/generate",
+            data: {
                 model: "llama3",
-                prompt: contextoTemporal + historial.join("\n") + "\nAsistente:",
-                stream: false
-            });
-            historial.push("Asistente: " + r.data.response.trim());
+                prompt: textoCompletoHistorial,
+                stream: true
+            },
+            responseType: 'stream'
+        });
+
+        let respuestaCompleta = "";
+        response.data.on('data', (chunk) => {
+            const lines = chunk.toString().split('\n');
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const json = JSON.parse(line);
+                    if (json.response) {
+                        respuestaCompleta += json.response;
+                        res.write(json.response); 
+                    }
+                } catch (err) { /* Ignorar fragmentos */ }
+            }
+        });
+
+        response.data.on('end', () => {
+            historial.push("Asistente: " + respuestaCompleta.trim());
+            fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
             const fechaArchivo = ahora.toISOString().slice(0, 10);
             fs.writeFileSync(path.join(AUTO_DIR, `auto_${fechaArchivo}.md`), historial.join("\n\n"));
-        } catch (e) { historial.push("Asistente: Error al conectar con Ollama."); }
+            res.end();
+        });
+
+    } catch (e) {
+        res.status(500).write("Error al conectar con Ollama.");
+        res.end();
     }
-    fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
-    res.json({ ok: true });
+});
+
+// Endpoint unificado para consultar el estado dinámico de los tokens en cualquier momento
+app.get("/current-tokens", (req, res) => {
+    res.json({ 
+        gasto: calcularUltimoGastoTokens(),
+        totalAcumulado: calcularTokensTotalesHistorial()
+    });
 });
 
 app.get("/files", (req, res) => {
@@ -91,43 +167,40 @@ app.get("/", (req, res) => {
                 --primary: #c1121f; --bg: #0f0f0f; --panel: #1a1a1a; --text: #eee; 
                 --input-bg: #000; --msg-user: #222; --topbar: #111; --border: #333;
             }
-
             body.light-mode {
                 --primary: #0077b6 !important; --bg: #f0f9ff !important; --panel: #ffffff !important; --text: #023e8a !important; 
                 --input-bg: #fff !important; --msg-user: #e0f2fe !important; --topbar: #caf0f8 !important; --border: #ade8f4 !important;
             }
-
             body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; transition: 0.3s; }
-            
             #sidebar { width: 300px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: 0.3s; position: absolute; left: -300px; height: 100%; z-index: 1000; }
             #sidebar.open { left: 0; }
             .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); font-weight: bold; display: flex; justify-content: space-between; }
-            
             .file-list { flex: 1; overflow-y: auto; padding: 10px; }
             .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 13px; border: 1px solid transparent; }
             .file-item:hover { background: rgba(255,255,255,0.05); }
-            
             .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; color: white; text-transform: uppercase; }
             .tag-manual { background: var(--primary) !important; }
-            
             #main { flex: 1; display: flex; flex-direction: column; width: 100%; position: relative; }
             #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-            
-            .msg { padding: 15px; border-radius: 8px; background: var(--panel); border-left: 4px solid var(--primary); max-width: 85%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+            .msg { padding: 15px; border-radius: 8px; background: var(--panel); border-left: 4px solid var(--primary); max-width: 85%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); word-wrap: break-word; }
             .user { border-left: none; border-right: 4px solid #555; background: var(--msg-user); margin-left: auto; }
+            .top-bar { padding: 10px 15px; background: var(--topbar); display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); min-height: 50px; }
             
-            .thinking { font-style: italic; opacity: 0.7; animation: blink 1s infinite; }
-            @keyframes blink { 50% { opacity: 0.3; } }
-
-            .top-bar { padding: 10px 20px; background: var(--topbar); display: flex; align-items: center; gap: 15px; border-bottom: 1px solid var(--border); min-height: 50px; }
+            .quick-actions { display: flex; gap: 8px; padding: 10px 20px 0 20px; }
+            .action-btn { font-size: 11px; padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 15px; cursor: pointer; opacity: 0.8; transition: 0.2s; }
+            .action-btn:hover { background: var(--primary); color: white; border-color: var(--primary); opacity: 1; }
+            
             .controls { display: flex; gap: 10px; padding: 20px; background: var(--topbar); border-top: 1px solid var(--border); }
-            
             input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
             button { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px; font-weight: bold; transition: 0.2s; }
             button:disabled { opacity: 0.5; cursor: not-allowed; }
-
             #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; }
             .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 30px; border-radius: 12px; z-index: 2001; width: 320px; text-align: center; border: 1px solid var(--border); color: var(--text); }
+            
+            .token-box { display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 12px; border: 1px solid var(--border); font-size: 11px; font-variant-numeric: tabular-nums; }
+            .info-btn { background: none; border: none; color: var(--text); opacity: 0.5; cursor: pointer; padding: 0 2px; font-size: 12px; transition: 0.2s; display: inline-flex; align-items: center; }
+            .info-btn:hover { opacity: 1; color: var(--primary); }
+            .top-bar button { padding: 8px 12px; }
         </style>
     </head>
     <body>
@@ -143,13 +216,25 @@ app.get("/", (req, res) => {
 
         <div id="main">
             <div class="top-bar">
-                <div style="cursor:pointer; font-size:24px;" onclick="toggleMenu()">☰</div>
-                <div style="flex:1; font-weight:bold; color:var(--primary)">Llama3 AI</div>
+                <div style="cursor:pointer; font-size:20px; padding: 0 4px;" onclick="toggleMenu()">☰</div>
+                <div style="flex:1; font-weight:bold; color:var(--primary); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Llama3 AI</div>
+                
+                <div class="token-box">
+                    <span id="tokenCounter">🔥 0 | 🧠 ...</span>
+                    <button class="info-btn" onclick="abrirInfoTokens()">ⓘ</button>
+                </div>
+
                 <button onclick="toggleTheme()" id="themeBtn">🌙</button>
                 <button onclick="abrirGuardarManual()">💾</button>
                 <button onclick="borrarActual()" style="background:#333">🗑</button>
             </div>
             <div id="chat"></div>
+            
+            <div class="quick-actions">
+                <button class="action-btn" onclick="enviarAccion('resumir')">📝 Resumir</button>
+                <button class="action-btn" onclick="enviarAccion('corregir')">🛠 Corregir</button>
+            </div>
+
             <div class="controls">
                 <input id="input" onkeypress="if(event.key==='Enter') enviar()">
                 <button id="btnEnviar" onclick="enviar()"></button>
@@ -170,26 +255,46 @@ app.get("/", (req, res) => {
             <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
         </div>
 
+        <div id="modalInfo" class="modal">
+            <h3 id="txtInfoTitle" style="color:var(--primary); margin-top: 0;"></h3>
+            <div id="txtInfoBody" style="font-size: 13px; text-align: left; line-height: 1.5; margin-bottom: 20px;"></div>
+            <button onclick="closeAll()" style="width:100%">Ok</button>
+        </div>
+
         <script>
             let rawHistorial = ${JSON.stringify(historial)};
-            
+            const textos = {
+                'Español': { 
+                    send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', historial: 'HISTORIAL', 
+                    saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', 
+                    cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?',
+                    infoTitle: 'Capacidad de Memoria',
+                    infoBody: 'El marcador superior te muestra la siguiente información:\\n\\n* **🔥 Gasto Actual**: Cantidad exacta de tokens procesados y gastados en este último mensaje.\\n* **🧠 Límite Estático (8192)**: Indica el tamaño máximo absoluto de la memoria del modelo Llama3. Al superar este umbral, el sistema comenzará a olvidar de forma automática los mensajes más antiguos del chat.'
+                },
+                'Inglés': { 
+                    send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', 
+                    saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', 
+                    cancel: 'Cancel', deleteConfirm: 'Delete file?',
+                    infoTitle: 'Memory Capacity',
+                    infoBody: 'The top counter displays the following information:\\n\\n* **🔥 Current Spend**: The exact amount of tokens processed and used in this latest message.\\n* **🧠 Static Limit (8192)**: Represents the absolute maximum memory size for Llama3. Once your chat history exceeds this volume, the AI will automatically discard the oldest messages to process new responses.'
+                },
+                'Francés': { 
+                    send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', 
+                    saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', 
+                    cancel: 'Annuler', deleteConfirm: 'Supprimer?',
+                    infoTitle: 'Capacité Mémoire',
+                    infoBody: 'Le marqueur supérieur affiche les informations suivantes :\\n\\n* **🔥 Utilisation Actuelle**: Nombre exact de tokens traités et consommés pour ce dernier message.\\n* **🧠 Limite Statique (8192)**: Indique la taille maximale absolue de la mémoire du modelo Llama3. Au-delà de ce seuil, le système oubliera automáticamente les messages les plus anciens.'
+                }
+            };
+
             function toggleTheme() {
                 const body = document.body;
                 const btn = document.getElementById('themeBtn');
                 body.classList.toggle('light-mode');
-                
                 const isLight = body.classList.contains('light-mode');
                 localStorage.setItem('theme', isLight ? 'light' : 'dark');
-                
-                // Cambio solicitado: Sol para modo claro, Luna para modo oscuro
                 btn.innerText = isLight ? '☀️' : '🌙';
             }
-
-            const textos = {
-                'Español': { send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?' },
-                'Inglés': { send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?' },
-                'Francés': { send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?' }
-            };
 
             function aplicarTraducciones() {
                 const lang = localStorage.getItem('idioma') || 'Español';
@@ -201,6 +306,14 @@ app.get("/", (req, res) => {
                 document.getElementById('nombreArchivo').placeholder = t.savePlaceholder;
                 document.getElementById('btnConfirmSave').innerText = t.confirmSave;
                 document.getElementById('btnCancelSave').innerText = t.cancel;
+                
+                document.getElementById('txtInfoTitle').innerText = t.infoTitle;
+                document.getElementById('txtInfoBody').innerHTML = marked.parse(t.infoBody);
+            }
+
+            function abrirInfoTokens() {
+                document.getElementById('overlay').style.display = 'block';
+                document.getElementById('modalInfo').style.display = 'block';
             }
 
             function renderChat() {
@@ -215,23 +328,82 @@ app.get("/", (req, res) => {
                 chatDiv.scrollTop = chatDiv.scrollHeight;
             }
 
-            async function enviar() {
+            // Realiza la resta matemática de los tokens consumidos contra el límite total (8192)
+            async function actualizarContadorTokensDesdeServidor() {
+                try {
+                    const res = await fetch('/current-tokens');
+                    const data = await res.json();
+                    
+                    const limiteMaximo = 8192;
+                    const restante = Math.max(0, limiteMaximo - data.totalAcumulado);
+                    
+                    document.getElementById('tokenCounter').innerText = \`🔥 \${data.gasto} | 🧠 \${restante}\`;
+                } catch(e) {
+                    document.getElementById('tokenCounter').innerText = '🔥 0 | 🧠 8192';
+                }
+            }
+
+            async function enviarAccion(tipo) {
+                enviar(null, tipo);
+            }
+
+            async function enviar(e, accion = null) {
                 const input = document.getElementById('input');
                 const chatDiv = document.getElementById('chat');
-                const lang = localStorage.getItem('idioma') || 'Español';
-                if(!input.value || input.disabled) return;
+                const btn = document.getElementById('btnEnviar');
                 const msg = input.value;
-                rawHistorial.push("Usuario: " + msg);
-                renderChat();
-                input.value = "";
+                
+                if(!accion && !msg) return;
+                
                 input.disabled = true;
-                const tempMsg = document.createElement('div');
-                tempMsg.className = 'msg thinking';
-                tempMsg.innerText = textos[lang].pensando;
-                chatDiv.appendChild(tempMsg);
-                chatDiv.scrollTop = chatDiv.scrollHeight;
-                await fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: msg }) });
-                location.reload();
+                btn.disabled = true;
+
+                if(!accion) {
+                    rawHistorial.push("Usuario: " + msg);
+                    input.value = "";
+                } else {
+                    const txt = accion === 'resumir' ? '📝 Resumir...' : '🛠 Corregir...';
+                    rawHistorial.push("Usuario: " + txt);
+                }
+                
+                renderChat();
+
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'msg';
+                chatDiv.appendChild(msgDiv);
+                
+                try {
+                    const response = await fetch('/', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ mensaje: msg, accion: accion })
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let assistantMsg = "";
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        const chunk = decoder.decode(value, { stream: true });
+                        assistantMsg += chunk;
+                        msgDiv.innerHTML = marked.parse(assistantMsg);
+                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                    }
+                    
+                    rawHistorial.push("Asistente: " + assistantMsg);
+
+                    // Sincroniza dinámicamente el marcador superior al completarse el mensaje
+                    await actualizarContadorTokensDesdeServidor();
+
+                } catch (err) {
+                    msgDiv.innerText = "Error al conectar.";
+                }
+
+                input.disabled = false;
+                btn.disabled = false;
+                input.focus();
             }
 
             async function cargarArchivos() {
@@ -253,14 +425,30 @@ app.get("/", (req, res) => {
 
             function setLang(lang) {
                 localStorage.setItem('idioma', lang);
-                fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) })
-                .then(() => location.reload());
+                fetch('/', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) 
+                })
+                .then(() => {
+                    // Nos aseguramos de sincronizar los tokens en el almacenamiento local o recargar limpiamente
+                    location.reload();
+                });
             }
 
             function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
             function abrirGuardarManual() { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; }
             function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
-            function borrarActual() { if(confirm("Clear chat?")) fetch('/clear', {method:'POST'}).then(() => { localStorage.removeItem('idioma'); location.reload(); }); }
+            
+            function borrarActual() { 
+                if(confirm("Clear chat?")) {
+                    fetch('/clear', {method:'POST'}).then(() => { 
+                        localStorage.removeItem('idioma'); 
+                        location.reload(); 
+                    }); 
+                } 
+            }
+            
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
             async function borrarFile(n, t) { if(confirm("Delete?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
             async function confirmarGuardadoManual() {
@@ -273,12 +461,12 @@ app.get("/", (req, res) => {
             window.onload = () => {
                 const savedTheme = localStorage.getItem('theme');
                 const btn = document.getElementById('themeBtn');
-                if(savedTheme === 'light') {
-                    document.body.classList.add('light-mode');
-                    btn.innerText = '☀️';
-                } else {
-                    btn.innerText = '🌙';
-                }
+                if(savedTheme === 'light') { document.body.classList.add('light-mode'); btn.innerText = '☀️'; }
+                else { btn.innerText = '🌙'; }
+                
+                // Ejecuta la consulta real de tokens al iniciar o recargar la pestaña
+                actualizarContadorTokensDesdeServidor();
+                
                 aplicarTraducciones();
                 renderChat();
                 if(rawHistorial.length === 0 || !localStorage.getItem('idioma')) {

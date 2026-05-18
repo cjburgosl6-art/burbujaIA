@@ -8,12 +8,11 @@
     "electron": "electron .",
     "dev": "npm run start & npm run electron"
   },
-
   "dependencies": {
     "axios": "^1.16.0",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "gpt-3-encoder": "^1.1.4"
   },
-
   "devDependencies": {
     "electron": "^42.0.1"
   }
