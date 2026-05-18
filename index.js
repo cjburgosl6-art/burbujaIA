@@ -98,8 +98,11 @@ app.get("/", (req, res) => {
             .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); font-weight: bold; display: flex; justify-content: space-between; }
             
             .file-list { flex: 1; overflow-y: auto; padding: 10px; }
-            .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 14px; border: 1px solid transparent; }
-            .file-item:hover { background: rgba(0,0,0,0.1); }
+            .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 13px; border: 1px solid transparent; }
+            .file-item:hover { background: rgba(255,255,255,0.05); }
+            
+            .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; color: white; text-transform: uppercase; }
+            .tag-manual { background: var(--primary) !important; }
             
             #main { flex: 1; display: flex; flex-direction: column; width: 100%; position: relative; }
             #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
@@ -166,7 +169,7 @@ app.get("/", (req, res) => {
             const textos = {
                 'Español': { send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?' },
                 'Inglés': { send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?' },
-                'Francés': { send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom du fichier', confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?' }
+                'Francés': { send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?' }
             };
 
             function toggleTheme() {
@@ -209,11 +212,9 @@ app.get("/", (req, res) => {
                 if(!input.value || input.disabled) return;
                 const msg = input.value;
                 
-                // 1. Mostrar usuario inmediatamente
                 rawHistorial.push("Usuario: " + msg);
                 renderChat();
                 
-                // 2. Estado pensando
                 input.value = "";
                 input.disabled = true;
                 const tempMsg = document.createElement('div');
@@ -226,6 +227,27 @@ app.get("/", (req, res) => {
                 location.reload();
             }
 
+            async function cargarArchivos() {
+                const res = await fetch('/files');
+                const files = await res.json();
+                const list = document.getElementById('fileList');
+                list.innerHTML = ""; 
+                
+                files.reverse().forEach(f => {
+                    const item = document.createElement('div');
+                    item.className = 'file-item';
+                    item.innerHTML = \`
+                        <span class="tag \${f.type === 'manual' ? 'tag-manual' : ''}">\${f.type}</span>
+                        <span style="flex:1; cursor:pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" 
+                              onclick="cargarFile('\${f.name}', '\${f.type}')">
+                            \${f.name}
+                        </span>
+                        <span style="cursor:pointer; padding-left:10px;" onclick="borrarFile('\${f.name}', '\${f.type}')">🗑</span>
+                    \`;
+                    list.appendChild(item);
+                });
+            }
+
             function setLang(lang) {
                 localStorage.setItem('idioma', lang);
                 fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) })
@@ -236,19 +258,6 @@ app.get("/", (req, res) => {
             function abrirGuardarManual() { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; }
             function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
             function borrarActual() { if(confirm("Clear chat?")) fetch('/clear', {method:'POST'}).then(() => { localStorage.removeItem('idioma'); location.reload(); }); }
-
-            async function cargarArchivos() {
-                const res = await fetch('/files');
-                const files = await res.json();
-                const list = document.getElementById('fileList');
-                list.innerHTML = files.reverse().map(f => \`
-                    <div class="file-item">
-                        <span class="tag \${f.type === 'manual' ? 'tag-manual' : ''}">\${f.type}</span>
-                        <span style="flex:1; cursor:pointer" onclick="cargarFile('\${f.name}', '\${f.type}')">\${f.name}</span>
-                        <span style="cursor:pointer" onclick="borrarFile('\${f.name}', '\${f.type}')">🗑</span>
-                    </div>\`).join('');
-            }
-
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
             async function borrarFile(n, t) { if(confirm("Delete?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
             async function confirmarGuardadoManual() {
@@ -275,5 +284,3 @@ app.get("/", (req, res) => {
 });
 
 app.listen(PORT, () => console.log("Use the toggle button to open the chat panel."));
-
-// Fin del código.
