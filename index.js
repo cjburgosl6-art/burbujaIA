@@ -17,19 +17,6 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
 let systemPrompt = "Eres un asistente de IA útil y conciso.";
 
-// Función interna para calcular el gasto exacto del último mensaje visible de la IA (ignora configuración del sistema)
-function calcularUltimoGastoTokens() {
-    const historialVisible = historial.filter(m => !m.startsWith("Sistema:"));
-    if (historialVisible.length === 0) return 0;
-    
-    const copiaHistorial = [...historialVisible];
-    const ultimaRespuesta = copiaHistorial.pop() || "";
-    
-    const contenidoIA = ultimaRespuesta.startsWith("Asistente: ") ? ultimaRespuesta.replace("Asistente: ", "") : ultimaRespuesta;
-    return Math.ceil(contenidoIA.length / 4) || 0;
-}
-
-// Función para calcular el peso total acumulado en el historial completo (incluye prompts del sistema)
 function calcularTokensTotalesHistorial() {
     if (historial.length === 0) return 0;
     const textoCompleto = historial.join("\n");
@@ -57,7 +44,6 @@ app.post("/", async (req, res) => {
 
     historial.push("Usuario: " + mensajeFinal);
     
-    // Instrucción pasiva para evitar que la IA repita la fecha constantemente en sus respuestas
     const ahora = new Date();
     const fechaTxt = ahora.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     const horaTxt = ahora.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
@@ -111,12 +97,14 @@ app.post("/", async (req, res) => {
     }
 });
 
-// Endpoint unificado para consultar el estado dinámico de los tokens en cualquier momento
 app.get("/current-tokens", (req, res) => {
     res.json({ 
-        gasto: calcularUltimoGastoTokens(),
         totalAcumulado: calcularTokensTotalesHistorial()
     });
+});
+
+app.get("/get-historial", (req, res) => {
+    res.json(historial);
 });
 
 app.get("/files", (req, res) => {
@@ -220,7 +208,7 @@ app.get("/", (req, res) => {
                 <div style="flex:1; font-weight:bold; color:var(--primary); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Llama3 AI</div>
                 
                 <div class="token-box">
-                    <span id="tokenCounter">🔥 0 | 🧠 ...</span>
+                    <span id="tokenCounter">🔥 0 | 🧠 8192</span>
                     <button class="info-btn" onclick="abrirInfoTokens()">ⓘ</button>
                 </div>
 
@@ -262,31 +250,32 @@ app.get("/", (req, res) => {
         </div>
 
         <script>
-            let rawHistorial = ${JSON.stringify(historial)};
+            let rawHistorial = [];
+            
             const textos = {
                 'Español': { 
                     send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', historial: 'HISTORIAL', 
                     saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', 
                     cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?',
-                    infoTitle: 'Capacidad de Memoria',
-                    infoBody: 'El marcador superior te muestra la siguiente información:\\n\\n* **🔥 Gasto Actual**: Cantidad exacta de tokens procesados y gastados en este último mensaje.\\n* **🧠 Límite Estático (8192)**: Indica el tamaño máximo absoluto de la memoria del modelo Llama3. Al superar este umbral, el sistema comenzará a olvidar de forma automática los mensajes más antiguos del chat.',
+                    infoTitle: 'Contador de Tokens',
+                    infoBody: 'El marcador superior te muestra la información del chat:\\n\\n* **🔥 Fuego (Acumulador)**: Suma total de tokens procesados en todo tu historial. Sube de manera continua con cada mensaje enviado.\\n* **🧠 Cerebro**: El límite de contexto estático del modelo Llama3 (8192 tokens).',
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir'
                 },
                 'Inglés': { 
                     send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', 
                     saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', 
                     cancel: 'Cancel', deleteConfirm: 'Delete file?',
-                    infoTitle: 'Memory Capacity',
-                    infoBody: 'The top counter displays the following information:\\n\\n* **🔥 Current Spend**: The exact amount of tokens processed and used in this latest message.\\n* **🧠 Static Limit (8192)**: Represents the absolute maximum memory size for Llama3. Once your chat history exceeds this volume, the AI will automatically discard the oldest messages to process new responses.',
+                    infoTitle: 'Token Counter',
+                    infoBody: 'The top counter displays your chat information:\\n\\n* **🔥 Fire (Accumulator)**: Cumulative sum of tokens used across the entire conversation. Keeps growing message by message.\\n* **🧠 Brain**: The static context limit for Llama3 (8192 tokens).',
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error'
                 },
                 'Francés': { 
                     send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', 
                     saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', 
                     cancel: 'Annuler', deleteConfirm: 'Supprimer?',
-                    infoTitle: 'Capacité Mémoire',
-                    infoBody: 'Le marqueur supérieur affiche les informations suivantes :\\n\\n* **🔥 Utilisation Actuelle**: Nombre exact de tokens traités et consommés pour ce dernier message.\\n* **🧠 Linite Statique (8192)**: Indique la taille maximale absolue de la mémoire du modelo Llama3. Au-delà de ce seuil, le système oubliera automáticamente les messages les plus anciens.',
-                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger'
+                    infoTitle: 'Compteur de Tokens',
+                    infoBody: 'Le marqueur supérieur affiche les détails du chat :\\n\\n* **🔥 Feu (Accumulateur)**: Somme cumulative des tokens consommés dans l’historique. Augmente continuellement.\\n* **🧠 Cerveau**: Limite de contexte statique de Llama3 (8192 tokens).',
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Couriger'
                 }
             };
 
@@ -329,21 +318,21 @@ app.get("/", (req, res) => {
                     .map(m => {
                         const isUser = m.startsWith('Usuario:');
                         const content = m.split(': ').slice(1).join(': ');
-                        return \`<div class="msg \${isUser ? 'user' : ''}">\${marked.parse(content)}</div>\`;
+                        return content.trim() ? { isUser, content } : null;
+                    })
+                    .filter(item => item !== null)
+                    .map(item => {
+                        const claseMsg = item.isUser ? 'msg user' : 'msg';
+                        return '<div class="' + claseMsg + '">' + marked.parse(item.content) + '</div>';
                     }).join('');
                 chatDiv.scrollTop = chatDiv.scrollHeight;
             }
 
-            // Realiza la resta matemática de los tokens consumidos contra el límite total (8192)
             async function actualizarContadorTokensDesdeServidor() {
                 try {
                     const res = await fetch('/current-tokens');
                     const data = await res.json();
-                    
-                    const limiteMaximo = 8192;
-                    const restante = Math.max(0, limiteMaximo - data.totalAcumulado);
-                    
-                    document.getElementById('tokenCounter').innerText = \`🔥 \${data.gasto} | 🧠 \${restante}\`;
+                    document.getElementById('tokenCounter').innerText = "🔥 " + data.totalAcumulado + " | 🧠 8192";
                 } catch(e) {
                     document.getElementById('tokenCounter').innerText = '🔥 0 | 🧠 8192';
                 }
@@ -399,8 +388,6 @@ app.get("/", (req, res) => {
                     }
                     
                     rawHistorial.push("Asistente: " + assistantMsg);
-
-                    // Sincroniza dinámicamente el marcador superior al completarse el mensaje
                     await actualizarContadorTokensDesdeServidor();
 
                 } catch (err) {
@@ -417,14 +404,23 @@ app.get("/", (req, res) => {
                 const files = await res.json();
                 const list = document.getElementById('fileList');
                 list.innerHTML = ""; 
-                files.reverse().forEach(f => {
+                files.reverse().forEach(archivo => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
-                    item.innerHTML = \`
-                        <span class="tag \${f.type === 'manual' ? 'tag-manual' : ''}">\${f.type}</span>
-                        <span style="flex:1; cursor:pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" 
-                              onclick="cargarFile('\${f.name}', '\${f.type}')">\${f.name}</span>
-                        <span style="cursor:pointer; padding-left:10px;" onclick="borrarFile('\${f.name}', '\${f.type}')">🗑</span>\`;
+                    
+                    const tagClass = archivo.type === 'manual' ? 'tag tag-manual' : 'tag';
+                    
+                    item.innerHTML = '<span class="' + tagClass + '">' + archivo.type + '</span>' +
+                        '<span class="file-link-name" style="flex:1; cursor:pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>' +
+                        '<span class="btn-delete-file" style="cursor:pointer; padding-left:10px;">🗑</span>';
+                    
+                    const linkSpan = item.querySelector('.file-link-name');
+                    linkSpan.innerText = archivo.name;
+                    linkSpan.onclick = () => cargarFile(archivo.name, archivo.type);
+
+                    const deleteSpan = item.querySelector('.btn-delete-file');
+                    deleteSpan.onclick = () => borrarFile(archivo.name, archivo.type);
+
                     list.appendChild(item);
                 });
             }
@@ -437,7 +433,6 @@ app.get("/", (req, res) => {
                     body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) 
                 })
                 .then(() => {
-                    // Nos aseguramos de sincronizar los tokens en el almacenamiento local o recargar limpiamente
                     location.reload();
                 });
             }
@@ -464,17 +459,23 @@ app.get("/", (req, res) => {
                 closeAll();
             }
 
-            window.onload = () => {
+            window.onload = async () => {
                 const savedTheme = localStorage.getItem('theme');
                 const btn = document.getElementById('themeBtn');
                 if(savedTheme === 'light') { document.body.classList.add('light-mode'); btn.innerText = '☀️'; }
                 else { btn.innerText = '🌙'; }
                 
-                // Ejecuta la consulta real de tokens al iniciar o recargar la pestaña
+                try {
+                    const res = await fetch('/get-historial');
+                    rawHistorial = await res.json();
+                } catch(e) {
+                    rawHistorial = [];
+                }
+
                 actualizarContadorTokensDesdeServidor();
-                
                 aplicarTraducciones();
                 renderChat();
+                
                 if(rawHistorial.length === 0 || !localStorage.getItem('idioma')) {
                     document.getElementById('overlay').style.display = 'block';
                     document.getElementById('modalIdioma').style.display = 'block';
