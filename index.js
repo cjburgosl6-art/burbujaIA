@@ -15,7 +15,7 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 [SAVES_DIR, AUTO_DIR].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); });
 
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
-let systemPrompt = "Eres un asistente de IA útil y conciso.";
+let systemPrompt = "Eres un asistente de IA útil y conciso. Responde siempre en Español.";
 
 function calcularTokensTotalesHistorial() {
     if (historial.length === 0) return 0;
@@ -33,8 +33,8 @@ app.post("/", async (req, res) => {
     }
 
     if (isSystem) {
-        historial.push("Sistema: " + mensaje);
-        fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+        const idiomaExtraido = mensaje.replace("Responde siempre en ", "");
+        systemPrompt = "Eres un asistente de IA útil y conciso. Responde siempre en " + idiomaExtraido + ".";
         return res.json({ ok: true });
     }
 
@@ -274,7 +274,7 @@ app.get("/", (req, res) => {
                     saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', 
                     cancel: 'Annuler', deleteConfirm: 'Supprimer?',
                     infoTitle: 'Compteur de Tokens',
-                    infoBody: 'Le marqueur supérieur affiche les détails du chat :\\n\\n* **🔥 Feu (Accumulateur)**: Somme cumulative des tokens consommés dans l’historique. Augmente continuellement.\\n* **🧠 Cerveau**: Limite de contexte statique de Llama3 (8192 tokens).',
+                    infoBody: 'Le marqueur supérieur affiche les détails du chat :\\n\\n* **🔥 Feu (Accumulateur)**: Somme cumulative des tokens consommés dans l’historique. Augmente continuellement.\\n* **🧠 Cerveau**: Limite de contexto estática de Llama3 (8192 tokens).',
                     btnResumir: '📝 Résumer', btnCorregir: '🛠 Couriger'
                 }
             };
@@ -289,7 +289,7 @@ app.get("/", (req, res) => {
             }
 
             function aplicarTraducciones() {
-                const lang = localStorage.getItem('idioma') || 'Español';
+                const lang = sessionStorage.getItem('idioma') || 'Español';
                 const t = textos[lang];
                 document.getElementById('btnEnviar').innerText = t.send;
                 document.getElementById('input').placeholder = t.placeholder;
@@ -368,6 +368,13 @@ app.get("/", (req, res) => {
                 chatDiv.appendChild(msgDiv);
                 
                 try {
+                    const langActivo = sessionStorage.getItem('idioma') || 'Español';
+                    await fetch('/', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({ mensaje: "Responde siempre en " + langActivo, isSystem: true }) 
+                    });
+
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
@@ -425,8 +432,9 @@ app.get("/", (req, res) => {
                 });
             }
 
+            // MODIFICADO: Ahora guarda la sesión temporalmente
             function setLang(lang) {
-                localStorage.setItem('idioma', lang);
+                sessionStorage.setItem('idioma', lang);
                 fetch('/', { 
                     method: 'POST', 
                     headers: {'Content-Type': 'application/json'}, 
@@ -444,7 +452,7 @@ app.get("/", (req, res) => {
             function borrarActual() { 
                 if(confirm("Clear chat?")) {
                     fetch('/clear', {method:'POST'}).then(() => { 
-                        localStorage.removeItem('idioma'); 
+                        // MODIFICADO: Ya no eliminamos el idioma de la sesión al vaciar el historial
                         location.reload(); 
                     }); 
                 } 
@@ -476,7 +484,9 @@ app.get("/", (req, res) => {
                 aplicarTraducciones();
                 renderChat();
                 
-                if(rawHistorial.length === 0 || !localStorage.getItem('idioma')) {
+                // MODIFICADO: Comprueba sessionStorage. Si abres el chat en una pestaña nueva, saltará obligatoriamente.
+                const idiomaActual = sessionStorage.getItem('idioma');
+                if(!idiomaActual) {
                     document.getElementById('overlay').style.display = 'block';
                     document.getElementById('modalIdioma').style.display = 'block';
                 }
