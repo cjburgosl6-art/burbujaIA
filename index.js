@@ -189,6 +189,37 @@ app.get("/", (req, res) => {
             .info-btn { background: none; border: none; color: var(--text); opacity: 0.5; cursor: pointer; padding: 0 2px; font-size: 12px; transition: 0.2s; display: inline-flex; align-items: center; }
             .info-btn:hover { opacity: 1; color: var(--primary); }
             .top-bar button { padding: 8px 12px; }
+
+            /* --- NUEVOS ESTILOS PARA LA ANIMACIÓN "ESCRIBIENDO..." --- */
+            .typing-container {
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                font-style: italic;
+                opacity: 0.8;
+                font-weight: 500;
+                animation: blink-effect 1.4s infinite alternate ease-in-out;
+            }
+
+            .typing-dots::after {
+                content: '';
+                display: inline-block;
+                width: 15px;
+                text-align: left;
+                /* Eliminamos 'alternate' para que siga la secuencia exacta del tirón */
+                animation: dots-cycle 2s infinite steps(1); 
+            }
+
+            /* Secuencia manual perfecta de ida y vuelta */
+            @keyframes dots-cycle {
+                0%   { content: ''; }
+                16%  { content: '.'; }
+                33%  { content: '..'; }
+                50%  { content: '...'; }
+                66%  { content: '..'; }
+                83%  { content: '.'; }
+                100% { content: ''; }
+            }
         </style>
     </head>
     <body>
@@ -254,7 +285,7 @@ app.get("/", (req, res) => {
             
             const textos = {
                 'Español': { 
-                    send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Pensando...', historial: 'HISTORIAL', 
+                    send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Escribiendo', historial: 'HISTORIAL', 
                     saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', 
                     cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?',
                     infoTitle: 'Contador de Tokens',
@@ -262,7 +293,7 @@ app.get("/", (req, res) => {
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir'
                 },
                 'Inglés': { 
-                    send: 'Send', placeholder: 'Type something...', pensando: 'Thinking...', historial: 'HISTORY', 
+                    send: 'Send', placeholder: 'Type something...', pensando: 'Typing', historial: 'HISTORY', 
                     saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', 
                     cancel: 'Cancel', deleteConfirm: 'Delete file?',
                     infoTitle: 'Token Counter',
@@ -270,7 +301,7 @@ app.get("/", (req, res) => {
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error'
                 },
                 'Francés': { 
-                    send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Pensée...', historial: 'HISTORIQUE', 
+                    send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Écrit', historial: 'HISTORIQUE', 
                     saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', 
                     cancel: 'Annuler', deleteConfirm: 'Supprimer?',
                     infoTitle: 'Compteur de Tokens',
@@ -347,6 +378,7 @@ app.get("/", (req, res) => {
                 const chatDiv = document.getElementById('chat');
                 const btn = document.getElementById('btnEnviar');
                 const msg = input.value;
+                const lang = sessionStorage.getItem('idioma') || 'Español';
                 
                 if(!accion && !msg) return;
                 
@@ -363,16 +395,18 @@ app.get("/", (req, res) => {
                 
                 renderChat();
 
+                // MODIFICADO: Añadimos el contenedor con la animación de los puntos antes de recibir texto
                 const msgDiv = document.createElement('div');
                 msgDiv.className = 'msg';
+                msgDiv.innerHTML = '<div class="typing-container"><span>' + textos[lang].pensando + '</span><span class="typing-dots"></span></div>';
                 chatDiv.appendChild(msgDiv);
+                chatDiv.scrollTop = chatDiv.scrollHeight;
                 
                 try {
-                    const langActivo = sessionStorage.getItem('idioma') || 'Español';
                     await fetch('/', { 
                         method: 'POST', 
                         headers: {'Content-Type': 'application/json'}, 
-                        body: JSON.stringify({ mensaje: "Responde siempre en " + langActivo, isSystem: true }) 
+                        body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) 
                     });
 
                     const response = await fetch('/', {
@@ -384,12 +418,20 @@ app.get("/", (req, res) => {
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
                     let assistantMsg = "";
+                    let primerChunk = true;
 
                     while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
                         const chunk = decoder.decode(value, { stream: true });
                         assistantMsg += chunk;
+                        
+                        // En cuanto llega el primer fragmento de texto, eliminamos el indicador "Escribiendo..."
+                        if(primerChunk) {
+                            msgDiv.innerHTML = "";
+                            primerChunk = false;
+                        }
+                        
                         msgDiv.innerHTML = marked.parse(assistantMsg);
                         chatDiv.scrollTop = chatDiv.scrollHeight;
                     }
@@ -414,7 +456,6 @@ app.get("/", (req, res) => {
                 files.reverse().forEach(archivo => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
-                    
                     const tagClass = archivo.type === 'manual' ? 'tag tag-manual' : 'tag';
                     
                     item.innerHTML = '<span class="' + tagClass + '">' + archivo.type + '</span>' +
@@ -432,7 +473,6 @@ app.get("/", (req, res) => {
                 });
             }
 
-            // MODIFICADO: Ahora guarda la sesión temporalmente
             function setLang(lang) {
                 sessionStorage.setItem('idioma', lang);
                 fetch('/', { 
@@ -452,7 +492,6 @@ app.get("/", (req, res) => {
             function borrarActual() { 
                 if(confirm("Clear chat?")) {
                     fetch('/clear', {method:'POST'}).then(() => { 
-                        // MODIFICADO: Ya no eliminamos el idioma de la sesión al vaciar el historial
                         location.reload(); 
                     }); 
                 } 
@@ -484,7 +523,6 @@ app.get("/", (req, res) => {
                 aplicarTraducciones();
                 renderChat();
                 
-                // MODIFICADO: Comprueba sessionStorage. Si abres el chat en una pestaña nueva, saltará obligatoriamente.
                 const idiomaActual = sessionStorage.getItem('idioma');
                 if(!idiomaActual) {
                     document.getElementById('overlay').style.display = 'block';
