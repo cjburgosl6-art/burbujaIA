@@ -15,7 +15,10 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 [SAVES_DIR, AUTO_DIR].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); });
 
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
-let systemPrompt = "Eres un asistente de IA útil y conciso. Responde siempre en Español. Si tu respuesta incluye bloques de código o comandos, usa el formato estándar de Markdown (con comillas invertidas) para encerrar el bloque y especifica el lenguaje. Si es una conversación normal, habla de forma totalmente natural, directa y sin dar explicaciones sobre el formato.";
+
+// SANEADO: Unificamos y aclaramos el comportamiento del prompt del sistema para evitar confusiones en Llama3
+let systemPrompt = "Eres un asistente de IA útil, natural y conciso. Responde siempre en Español. IMPORTANTE: Habla de forma totalmente natural, directa y fluida. SOLO si el usuario te pide explícitamente un código fuente, script o comando, utiliza los bloques de código estándar de Markdown (```). No uses comillas inversas ni formatos extraños en conversaciones normales.";
+
 function calcularTokensTotalesHistorial() {
     if (historial.length === 0) return 0;
     const textoCompleto = historial.join("\n");
@@ -32,7 +35,7 @@ app.post("/", async (req, res) => {
 
     if (isSystem) {
         const idiomaExtraido = mensaje.replace("Responde siempre en ", "");
-        systemPrompt = "Eres un asistente de IA útil y conciso. Responde siempre en " + idiomaExtraido + ". Si vas a mostrar código, usa siempre bloques de tres comillas invertidas Markdown.";
+        systemPrompt = `Eres un asistente de IA útil, natural y conciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: Habla de forma totalmente natural, directa y fluida. SOLO si el usuario te pide explícitamente un código fuente, script o comando, utiliza los bloques de código estándar de Markdown (\`\`\`). No uses comillas inversas ni formatos extraños en conversaciones normales.`;
         return res.json({ ok: true });
     }
 
@@ -75,21 +78,24 @@ app.post("/", async (req, res) => {
         });
 
         response.data.on('data', (chunk) => {
-    const lines = chunk.toString().split('\n');
-    for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-            const json = JSON.parse(line);
-            if (json.response) {
-                // FILTRO: Limpia esos extraños {3} o cualquier número entre llaves que intente colarse
-                let fragmentoLimpio = json.response.replace(/\{\d+\}/g, '');
-                
-                respuestaCompleta += fragmentoLimpio;
-                res.write(fragmentoLimpio); 
+            const lines = chunk.toString().split('\n');
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const json = JSON.parse(line);
+                    if (json.response) {
+                        // FILTRO ROBUSTO: Limpia residuos extraños que Llama3 genere por obsesión al formato
+                        let fragmentoLimpio = json.response
+                            .replace(/\{\d+\}/g, '')
+                            .replace(/\{\s*'\s*\}\}/g, '')
+                            .replace(/\{\s*"\s*\}\}/g, '');
+                        
+                        respuestaCompleta += fragmentoLimpio;
+                        res.write(fragmentoLimpio); 
+                    }
+                } catch (err) { /* Ignorar fragmentos */ }
             }
-        } catch (err) { /* Ignorar fragmentos */ }
-    }
-});
+        });
 
         response.data.on('end', () => {
             historial.push("Asistente: " + respuestaCompleta.trim());
@@ -104,6 +110,26 @@ app.post("/", async (req, res) => {
             
             const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.md`;
             fs.writeFileSync(path.join(AUTO_DIR, nombreArchivoCronologico), historial.join("\n\n"));
+
+            // LIMITADOR ROTATIVO DE AUTOSAVES
+            const archivosAuto = fs.readdirSync(AUTO_DIR)
+                .filter(f => f.endsWith('.md'))
+                .map(f => ({
+                    nombre: f,
+                    ruta: path.join(AUTO_DIR, f),
+                    mtime: fs.statSync(path.join(AUTO_DIR, f)).mtime
+                }));
+
+            archivosAuto.sort((a, b) => a.mtime - b.mtime);
+
+            const LIMITE_AUTOSAVES = 30;
+            if (archivosAuto.length > LIMITE_AUTOSAVES) {
+                const cuantosBorrar = archivosAuto.length - LIMITE_AUTOSAVES;
+                for (let i = 0; i < cuantosBorrar; i++) {
+                    fs.unlinkSync(archivosAuto[i].ruta);
+                }
+            }
+
             res.end();
         });
 
@@ -177,11 +203,10 @@ app.get("/", (req, res) => {
             #sidebar.open { left: 0; }
             .sidebar-header { padding: 20px 20px 10px 20px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
             
-            /* CONTENEDOR DE PESTAÑAS (TABS) */
             .tabs-container { display: flex; padding: 0 15px 10px 15px; border-bottom: 1px solid var(--border); gap: 5px; }
             .tab-btn { flex: 1; padding: 8px 5px; font-size: 11px; font-weight: bold; text-transform: uppercase; border: 1px solid var(--border); background: rgba(0,0,0,0.2); color: var(--text); border-radius: 6px; cursor: pointer; transition: 0.2s; opacity: 0.6; }
             .tab-btn:hover { opacity: 1; background: rgba(255,255,255,0.03); }
-            .tab-btn.active { opacity: 1; background: var(--primary); color: #white; border-color: var(--primary); }
+            .tab-btn.active { opacity: 1; background: var(--primary); color: white; border-color: var(--primary); }
 
             .file-list { flex: 1; overflow-y: auto; padding: 10px; }
             .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 13px; border: 1px solid transparent; background: rgba(0,0,0,0.1); }
@@ -279,7 +304,7 @@ app.get("/", (req, res) => {
             let rawHistorial = [];
             let isGenerating = false; 
             let abortController = null; 
-            let pestañaActiva = 'manual'; // Guardará qué pestaña del sidebar está seleccionada
+            let pestañaActiva = 'manual';
             
             const renderer = new marked.Renderer();
             
@@ -318,7 +343,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
                     confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
-                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual. 🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de "Resumir" te ayudarán a compactar el chat para no perder el hilo.', 
+                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual. 🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de \"Resumir\" te ayudarán a compactar el chat para no perder el hilo.', 
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir' 
                 },
                 'Inglés': { 
@@ -326,7 +351,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
                     confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
-                    infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session. 🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the "Summarize" actions to compress your chat history.', 
+                    infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session. 🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the \"Summarize\" actions to compress your chat history.', 
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error' 
                 },
                 'Francés': { 
@@ -334,7 +359,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
                     confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
-                    infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session. 🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez "Résumer" pour compacter l\\'historique si nécessaire.', 
+                    infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session. 🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez \"Résumer\" pour compacter l\\'historique si nécessaire.', 
                     btnResumir: '📝 Résumer', btnCorregir: '🛠 Couriger' 
                 }
             };
@@ -401,7 +426,17 @@ app.get("/", (req, res) => {
                 chatDiv.innerHTML = "";
                 rawHistorial.filter(m => !m.startsWith('Sistema:')).map(m => {
                     const isUser = m.startsWith('Usuario:');
-                    const content = m.split(': ').slice(1).join(': ');
+                    let content = m.split(': ').slice(1).join(': ');
+                    
+                    if(!isUser) {
+                        content = content.trim();
+                        // CORRECCIÓN: Si el modelo devuelve residuos por fallos de contexto, los limpiamos antes de renderizar
+                        content = content
+                            .replace(/\{\d+\}/g, '')
+                            .replace(/\{\s*'\s*\}\}/g, '')
+                            .replace(/\{\s*"\s*\}\}/g, '');
+                    }
+                    
                     return content.trim() ? { isUser, content } : null;
                 }).filter(i => i !== null).forEach(item => {
                     if (item.content === '{"ok":true}') return;
@@ -455,7 +490,8 @@ app.get("/", (req, res) => {
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ mensaje: msg, accion: accion, newSystemPrompt: "Responde en " + lang + ". Usa bloques con tres comillas para código." }),
+                        // CORRECCIÓN: Quitamos la orden agresiva del systemPrompt dinámico para que no fuerce comillas inversas en texto plano
+                        body: JSON.stringify({ mensaje: msg, accion: accion, newSystemPrompt: "Responde en " + lang + ". Habla de forma natural y fluida." }),
                         signal: abortController.signal
                     });
                     const reader = response.body.getReader();
@@ -464,7 +500,12 @@ app.get("/", (req, res) => {
                     while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
-                        assistantMsg += decoder.decode(value, { stream: true });
+                        let chunkTxt = decoder.decode(value, { stream: true });
+                        
+                        // Limpieza en tiempo real durante el streaming
+                        chunkTxt = chunkTxt.replace(/\{\d+\}/g, '').replace(/\{\s*'\s*\}\}/g, '').replace(/\{\s*"\s*\}\}/g, '');
+                        
+                        assistantMsg += chunkTxt;
                         if(primerChunk) { msgDiv.innerHTML = ""; primerChunk = false; }
                         msgDiv.innerHTML = marked.parse(assistantMsg);
                         chatDiv.scrollTop = chatDiv.scrollHeight;
@@ -480,12 +521,11 @@ app.get("/", (req, res) => {
                 cambiarEstadoControles(false); abortController = null;
             }
 
-            // FUNCIÓN PARA CONMUTAR EL FILTRADO ENTRE PESTAÑAS
             function cambiarPestañaArchivos(tipo) {
                 pestañaActiva = tipo;
                 document.getElementById('tabManual').classList.toggle('active', tipo === 'manual');
                 document.getElementById('tabAuto').classList.toggle('active', tipo === 'auto');
-                cargarArchivos(); // Recarga la lista aplicando el filtro visual
+                cargarArchivos();
             }
 
             async function cargarArchivos() {
@@ -494,10 +534,8 @@ app.get("/", (req, res) => {
                 const list = document.getElementById('fileList');
                 list.innerHTML = ""; 
                 
-                // FILTRADO: Solo mostramos los archivos que correspondan a la pestaña activa
                 const archivosFiltrados = allFiles.filter(f => f.type === pestañaActiva);
                 
-                // Ordenar cronológicamente invertidos (los últimos guardados salen los primeros)
                 archivosFiltrados.reverse().forEach(archivo => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
