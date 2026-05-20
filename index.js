@@ -69,6 +69,14 @@ app.post("/", async (req, res) => {
         });
 
         let respuestaCompleta = "";
+        
+        // Manejador para cerrar la conexión con Ollama si el cliente aborta la petición HTTP externa
+        req.on('close', () => {
+            if (response.data && typeof response.data.destroy === 'function') {
+                response.data.destroy(); 
+            }
+        });
+
         response.data.on('data', (chunk) => {
             const lines = chunk.toString().split('\n');
             for (const line of lines) {
@@ -97,15 +105,8 @@ app.post("/", async (req, res) => {
     }
 });
 
-app.get("/current-tokens", (req, res) => {
-    res.json({ 
-        totalAcumulado: calcularTokensTotalesHistorial()
-    });
-});
-
-app.get("/get-historial", (req, res) => {
-    res.json(historial);
-});
+app.get("/current-tokens", (req, res) => { res.json({ totalAcumulado: calcularTokensTotalesHistorial() }); });
+app.get("/get-historial", (req, res) => { res.json(historial); });
 
 app.get("/files", (req, res) => {
     const manual = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.md')).map(f => ({ name: f, type: 'manual' }));
@@ -177,11 +178,16 @@ app.get("/", (req, res) => {
             .quick-actions { display: flex; gap: 8px; padding: 10px 20px 0 20px; }
             .action-btn { font-size: 11px; padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 15px; cursor: pointer; opacity: 0.8; transition: 0.2s; }
             .action-btn:hover { background: var(--primary); color: white; border-color: var(--primary); opacity: 1; }
+            .action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
             
             .controls { display: flex; gap: 10px; padding: 20px; background: var(--topbar); border-top: 1px solid var(--border); }
             input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
             button { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px; font-weight: bold; transition: 0.2s; }
-            button:disabled { opacity: 0.5; cursor: not-allowed; }
+            
+            /* Color gris oscuro/negro para el botón de cancelar */
+            button.btn-stop { background: #333 !important; }
+            button.btn-stop:hover { background: #555 !important; }
+            
             #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; }
             .modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--panel); padding: 30px; border-radius: 12px; z-index: 2001; width: 320px; text-align: center; border: 1px solid var(--border); color: var(--text); }
             
@@ -190,36 +196,10 @@ app.get("/", (req, res) => {
             .info-btn:hover { opacity: 1; color: var(--primary); }
             .top-bar button { padding: 8px 12px; }
 
-            /* --- NUEVOS ESTILOS PARA LA ANIMACIÓN "ESCRIBIENDO..." --- */
-            .typing-container {
-                display: flex;
-                align-items: center;
-                gap: 5px;
-                font-style: italic;
-                opacity: 0.8;
-                font-weight: 500;
-                animation: blink-effect 1.4s infinite alternate ease-in-out;
-            }
-
-            .typing-dots::after {
-                content: '';
-                display: inline-block;
-                width: 15px;
-                text-align: left;
-                /* Eliminamos 'alternate' para que siga la secuencia exacta del tirón */
-                animation: dots-cycle 2s infinite steps(1); 
-            }
-
-            /* Secuencia manual perfecta de ida y vuelta */
-            @keyframes dots-cycle {
-                0%   { content: ''; }
-                16%  { content: '.'; }
-                33%  { content: '..'; }
-                50%  { content: '...'; }
-                66%  { content: '..'; }
-                83%  { content: '.'; }
-                100% { content: ''; }
-            }
+            .typing-container { display: flex; align-items: center; gap: 5px; font-style: italic; opacity: 0.8; font-weight: 500; animation: blink-effect 1.4s infinite alternate ease-in-out; }
+            .typing-dots::after { content: ''; display: inline-block; width: 15px; text-align: left; animation: dots-cycle 2s infinite steps(1); }
+            @keyframes blink-effect { 0% { opacity: 0.5; } 100% { opacity: 1; } }
+            @keyframes dots-cycle { 0% { content: ''; } 16% { content: '.'; } 33% { content: '..'; } 50% { content: '...'; } 66% { content: '..'; } 83% { content: '.'; } 100% { content: ''; } }
         </style>
     </head>
     <body>
@@ -255,8 +235,8 @@ app.get("/", (req, res) => {
             </div>
 
             <div class="controls">
-                <input id="input" onkeypress="if(event.key==='Enter') enviar()">
-                <button id="btnEnviar" onclick="enviar()"></button>
+                <input id="input" onkeypress="if(event.key==='Enter' && !isGenerating) enviar()">
+                <button id="btnEnviar" onclick="manejadorBotonPrincipal()"></button>
             </div>
         </div>
 
@@ -282,10 +262,12 @@ app.get("/", (req, res) => {
 
         <script>
             let rawHistorial = [];
+            let isGenerating = false; // Controla si la IA está activa escribiendo
+            let abortController = null; // Guardará el token de cancelación de la petición HTTP
             
             const textos = {
                 'Español': { 
-                    send: 'Enviar', placeholder: 'Escribe algo...', pensando: 'Escribiendo', historial: 'HISTORIAL', 
+                    send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo', historial: 'HISTORIAL', 
                     saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', confirmSave: 'Guardar ahora', 
                     cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?',
                     infoTitle: 'Contador de Tokens',
@@ -293,7 +275,7 @@ app.get("/", (req, res) => {
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir'
                 },
                 'Inglés': { 
-                    send: 'Send', placeholder: 'Type something...', pensando: 'Typing', historial: 'HISTORY', 
+                    send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing', historial: 'HISTORY', 
                     saveTitle: 'Save conversation', savePlaceholder: 'File name', confirmSave: 'Save now', 
                     cancel: 'Cancel', deleteConfirm: 'Delete file?',
                     infoTitle: 'Token Counter',
@@ -301,7 +283,7 @@ app.get("/", (req, res) => {
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error'
                 },
                 'Francés': { 
-                    send: 'Envoyer', placeholder: 'Écrivez...', pensando: 'Écrit', historial: 'HISTORIQUE', 
+                    send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit', historial: 'HISTORIQUE', 
                     saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom del archivo', confirmSave: 'Enregistrer', 
                     cancel: 'Annuler', deleteConfirm: 'Supprimer?',
                     infoTitle: 'Compteur de Tokens',
@@ -322,7 +304,10 @@ app.get("/", (req, res) => {
             function aplicarTraducciones() {
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 const t = textos[lang];
-                document.getElementById('btnEnviar').innerText = t.send;
+                
+                // Si está generando muestra "Detener", si no, muestra el botón estándar "Enviar"
+                document.getElementById('btnEnviar').innerText = isGenerating ? t.stop : t.send;
+                
                 document.getElementById('input').placeholder = t.placeholder;
                 document.getElementById('txtHistorialTitle').innerText = t.historial;
                 document.getElementById('txtSaveTitle').innerText = t.saveTitle;
@@ -337,11 +322,49 @@ app.get("/", (req, res) => {
                 document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
             }
 
+            // Decide si envía un mensaje o frena la generación activa
+            function manejadorBotonPrincipal() {
+                if(isGenerating) {
+                    cancelarRespuesta();
+                } else {
+                    enviar();
+                }
+            }
+
+            function cancelarRespuesta() {
+                if(abortController) {
+                    abortController.abort(); // Lanza la señal de cancelación a la petición HTTP
+                }
+            }
+
+            function cambiarEstadoControles(generando) {
+                isGenerating = generando;
+                const input = document.getElementById('input');
+                const btn = document.getElementById('btnEnviar');
+                const lang = sessionStorage.getItem('idioma') || 'Español';
+                
+                // Deshabilitamos los botones rápidos de acciones mientras genera
+                document.getElementById('btnActionResumir').disabled = generando;
+                document.getElementById('btnActionCorregir').disabled = generando;
+
+                if(generando) {
+                    input.disabled = true;
+                    btn.innerText = textos[lang].stop;
+                    btn.classList.add('btn-stop'); // Le cambia el color a gris
+                } else {
+                    input.disabled = false;
+                    btn.innerText = textos[lang].send;
+                    btn.classList.remove('btn-stop');
+                    input.focus();
+                }
+            }
+
             function abrirInfoTokens() {
                 document.getElementById('overlay').style.display = 'block';
                 document.getElementById('modalInfo').style.display = 'block';
             }
 
+            // Redibujar chat filtrando los posibles mensajes huérfanos que dejó una cancelación
             function renderChat() {
                 const chatDiv = document.getElementById('chat');
                 chatDiv.innerHTML = rawHistorial
@@ -370,20 +393,19 @@ app.get("/", (req, res) => {
             }
 
             async function enviarAccion(tipo) {
-                enviar(null, tipo);
+                if(!isGenerating) enviar(null, tipo);
             }
 
             async function enviar(e, accion = null) {
                 const input = document.getElementById('input');
                 const chatDiv = document.getElementById('chat');
-                const btn = document.getElementById('btnEnviar');
                 const msg = input.value;
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 
                 if(!accion && !msg) return;
                 
-                input.disabled = true;
-                btn.disabled = true;
+                cambiarEstadoControles(true); // Cambia el botón a modo "Detener"
+                abortController = new AbortController(); // Inicializamos el disparador de cancelación
 
                 if(!accion) {
                     rawHistorial.push("Usuario: " + msg);
@@ -395,7 +417,6 @@ app.get("/", (req, res) => {
                 
                 renderChat();
 
-                // MODIFICADO: Añadimos el contenedor con la animación de los puntos antes de recibir texto
                 const msgDiv = document.createElement('div');
                 msgDiv.className = 'msg';
                 msgDiv.innerHTML = '<div class="typing-container"><span>' + textos[lang].pensando + '</span><span class="typing-dots"></span></div>';
@@ -403,16 +424,19 @@ app.get("/", (req, res) => {
                 chatDiv.scrollTop = chatDiv.scrollHeight;
                 
                 try {
+                    // Petición auxiliar de sincronización de idioma
                     await fetch('/', { 
                         method: 'POST', 
                         headers: {'Content-Type': 'application/json'}, 
                         body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) 
                     });
 
+                    // Petición principal pasándole la señal del controlador abortivo
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ mensaje: msg, accion: accion })
+                        body: JSON.stringify({ mensaje: msg, accion: accion }),
+                        signal: abortController.signal
                     });
 
                     const reader = response.body.getReader();
@@ -426,7 +450,6 @@ app.get("/", (req, res) => {
                         const chunk = decoder.decode(value, { stream: true });
                         assistantMsg += chunk;
                         
-                        // En cuanto llega el primer fragmento de texto, eliminamos el indicador "Escribiendo..."
                         if(primerChunk) {
                             msgDiv.innerHTML = "";
                             primerChunk = false;
@@ -440,12 +463,25 @@ app.get("/", (req, res) => {
                     await actualizarContadorTokensDesdeServidor();
 
                 } catch (err) {
-                    msgDiv.innerText = "Error al conectar.";
+                    // CONTROL DE CANCELACIÓN REFINADO
+                    if (err.name === 'AbortError') {
+                        // Si se canceló mientras salía la animación (primerChunk sigue siendo true)
+                        if (primerChunk) {
+                            msgDiv.innerHTML = '<span style="color:#888; font-style:italic;">Operación cancelada</span>';
+                            rawHistorial.push("Asistente: Operación cancelada");
+                        } else {
+                            // Si ya había empezado a escribir texto real, conservamos el texto y añadimos la coletilla
+                            msgDiv.innerHTML += ' <span style="color:#888; font-size:11px; font-style:italic;">(Cortado por el usuario)</span>';
+                            const textoParcial = msgDiv.innerText.replace('(Cortado por el usuario)', '').trim();
+                            if (textoParcial) rawHistorial.push("Asistente: " + textoParcial);
+                        }
+                    } else {
+                        msgDiv.innerText = "Error al conectar.";
+                    }
                 }
 
-                input.disabled = false;
-                btn.disabled = false;
-                input.focus();
+                cambiarEstadoControles(false); // Restaura el botón a su modo de envío habitual
+                abortController = null;
             }
 
             async function cargarArchivos() {
@@ -464,10 +500,10 @@ app.get("/", (req, res) => {
                     
                     const linkSpan = item.querySelector('.file-link-name');
                     linkSpan.innerText = archivo.name;
-                    linkSpan.onclick = () => cargarFile(archivo.name, archivo.type);
+                    linkSpan.onclick = () => !isGenerating && cargarFile(archivo.name, archivo.type);
 
                     const deleteSpan = item.querySelector('.btn-delete-file');
-                    deleteSpan.onclick = () => borrarFile(archivo.name, archivo.type);
+                    deleteSpan.onclick = () => !isGenerating && borrarFile(archivo.name, archivo.type);
 
                     list.appendChild(item);
                 });
@@ -486,11 +522,11 @@ app.get("/", (req, res) => {
             }
 
             function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
-            function abrirGuardarManual() { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; }
+            function abrirGuardarManual() { if(!isGenerating) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; } }
             function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
             
             function borrarActual() { 
-                if(confirm("Clear chat?")) {
+                if(!isGenerating && confirm("Clear chat?")) {
                     fetch('/clear', {method:'POST'}).then(() => { 
                         location.reload(); 
                     }); 
@@ -519,6 +555,7 @@ app.get("/", (req, res) => {
                     rawHistorial = [];
                 }
 
+                cambiarEstadoControles(false);
                 actualizarContadorTokensDesdeServidor();
                 aplicarTraducciones();
                 renderChat();
