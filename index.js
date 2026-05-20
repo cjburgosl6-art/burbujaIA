@@ -27,9 +27,9 @@ function calcularTokensTotalesHistorial() {
 app.post("/", async (req, res) => {
     const { mensaje, isSystem, newSystemPrompt, accion } = req.body;
     
+    // CORRECCIÓN: Actualiza el prompt de sistema sin cortar la petición con un return
     if (newSystemPrompt) {
         systemPrompt = newSystemPrompt;
-        return res.json({ ok: true });
     }
 
     if (isSystem) {
@@ -184,7 +184,6 @@ app.get("/", (req, res) => {
             input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
             button { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px; font-weight: bold; transition: 0.2s; }
             
-            /* Color gris oscuro/negro para el botón de cancelar */
             button.btn-stop { background: #333 !important; }
             button.btn-stop:hover { background: #555 !important; }
             
@@ -262,8 +261,8 @@ app.get("/", (req, res) => {
 
         <script>
             let rawHistorial = [];
-            let isGenerating = false; // Controla si la IA está activa escribiendo
-            let abortController = null; // Guardará el token de cancelación de la petición HTTP
+            let isGenerating = false; 
+            let abortController = null; 
             
             const textos = {
                 'Español': { 
@@ -305,9 +304,7 @@ app.get("/", (req, res) => {
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 const t = textos[lang];
                 
-                // Si está generando muestra "Detener", si no, muestra el botón estándar "Enviar"
                 document.getElementById('btnEnviar').innerText = isGenerating ? t.stop : t.send;
-                
                 document.getElementById('input').placeholder = t.placeholder;
                 document.getElementById('txtHistorialTitle').innerText = t.historial;
                 document.getElementById('txtSaveTitle').innerText = t.saveTitle;
@@ -322,7 +319,6 @@ app.get("/", (req, res) => {
                 document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
             }
 
-            // Decide si envía un mensaje o frena la generación activa
             function manejadorBotonPrincipal() {
                 if(isGenerating) {
                     cancelarRespuesta();
@@ -333,7 +329,7 @@ app.get("/", (req, res) => {
 
             function cancelarRespuesta() {
                 if(abortController) {
-                    abortController.abort(); // Lanza la señal de cancelación a la petición HTTP
+                    abortController.abort(); 
                 }
             }
 
@@ -343,14 +339,13 @@ app.get("/", (req, res) => {
                 const btn = document.getElementById('btnEnviar');
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 
-                // Deshabilitamos los botones rápidos de acciones mientras genera
                 document.getElementById('btnActionResumir').disabled = generando;
                 document.getElementById('btnActionCorregir').disabled = generando;
 
                 if(generando) {
                     input.disabled = true;
                     btn.innerText = textos[lang].stop;
-                    btn.classList.add('btn-stop'); // Le cambia el color a gris
+                    btn.classList.add('btn-stop'); 
                 } else {
                     input.disabled = false;
                     btn.innerText = textos[lang].send;
@@ -364,7 +359,6 @@ app.get("/", (req, res) => {
                 document.getElementById('modalInfo').style.display = 'block';
             }
 
-            // Redibujar chat filtrando los posibles mensajes huérfanos que dejó una cancelación
             function renderChat() {
                 const chatDiv = document.getElementById('chat');
                 chatDiv.innerHTML = rawHistorial
@@ -396,6 +390,7 @@ app.get("/", (req, res) => {
                 if(!isGenerating) enviar(null, tipo);
             }
 
+            /* VERSION CORREGIDA DE LA FUNCIÓN ENVIAR */
             async function enviar(e, accion = null) {
                 const input = document.getElementById('input');
                 const chatDiv = document.getElementById('chat');
@@ -404,8 +399,8 @@ app.get("/", (req, res) => {
                 
                 if(!accion && !msg) return;
                 
-                cambiarEstadoControles(true); // Cambia el botón a modo "Detener"
-                abortController = new AbortController(); // Inicializamos el disparador de cancelación
+                cambiarEstadoControles(true); 
+                abortController = new AbortController(); 
 
                 if(!accion) {
                     rawHistorial.push("Usuario: " + msg);
@@ -423,26 +418,24 @@ app.get("/", (req, res) => {
                 chatDiv.appendChild(msgDiv);
                 chatDiv.scrollTop = chatDiv.scrollHeight;
                 
-                try {
-                    // Petición auxiliar de sincronización de idioma
-                    await fetch('/', { 
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'}, 
-                        body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) 
-                    });
+                // MOVIDO AQUÍ: Declaramos la variable fuera para que tanto el try como el catch tengan acceso a ella
+                let primerChunk = true;
 
-                    // Petición principal pasándole la señal del controlador abortivo
+                try {
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ mensaje: msg, accion: accion }),
+                        body: JSON.stringify({ 
+                            mensaje: msg, 
+                            accion: accion,
+                            newSystemPrompt: "Eres un asistente de IA útil y conciso. Responde siempre en " + lang + "."
+                        }),
                         signal: abortController.signal
                     });
 
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
                     let assistantMsg = "";
-                    let primerChunk = true;
 
                     while (true) {
                         const { done, value } = await reader.read();
@@ -463,14 +456,12 @@ app.get("/", (req, res) => {
                     await actualizarContadorTokensDesdeServidor();
 
                 } catch (err) {
-                    // CONTROL DE CANCELACIÓN REFINADO
                     if (err.name === 'AbortError') {
-                        // Si se canceló mientras salía la animación (primerChunk sigue siendo true)
                         if (primerChunk) {
+                            // Ahora sí funcionará sin romper la consola
                             msgDiv.innerHTML = '<span style="color:#888; font-style:italic;">Operación cancelada</span>';
                             rawHistorial.push("Asistente: Operación cancelada");
                         } else {
-                            // Si ya había empezado a escribir texto real, conservamos el texto y añadimos la coletilla
                             msgDiv.innerHTML += ' <span style="color:#888; font-size:11px; font-style:italic;">(Cortado por el usuario)</span>';
                             const textoParcial = msgDiv.innerText.replace('(Cortado por el usuario)', '').trim();
                             if (textoParcial) rawHistorial.push("Asistente: " + textoParcial);
@@ -480,7 +471,7 @@ app.get("/", (req, res) => {
                     }
                 }
 
-                cambiarEstadoControles(false); // Restaura el botón a su modo de envío habitual
+                cambiarEstadoControles(false); 
                 abortController = null;
             }
 
