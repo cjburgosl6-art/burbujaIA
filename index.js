@@ -303,7 +303,7 @@ app.get("/", (req, res) => {
                     copy: 'Copiar Mensaje', 
                     copied: '¡Copiado!', 
                     infoTitle: 'Contador de Tokens', 
-                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual.<br><br>🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de "Resumir" te ayudarán a compactar el chat para no perder el hilo.', 
+                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual.<br>🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de "Resumir" te ayudarán a compactar el chat para no perder el hilo.', 
                     btnResumir: '📝 Resumir', 
                     btnCorregir: '🛠 Corregir' 
                 },
@@ -321,7 +321,7 @@ app.get("/", (req, res) => {
                     copy: 'Copy Message', 
                     copied: 'Copied!', 
                     infoTitle: 'Token Counter', 
-                    infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session.<br><br>🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the "Summarize" actions to compress your chat history.', 
+                    infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session.<br>🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the "Summarize" actions to compress your chat history.', 
                     btnResumir: '📝 Summarize', 
                     btnCorregir: '🛠 Fix Error' 
                 },
@@ -339,7 +339,7 @@ app.get("/", (req, res) => {
                     copy: 'Copier', 
                     copied: 'Copié!', 
                     infoTitle: 'Tokens', 
-                    infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session.<br><br>🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez "Résumer" pour compacter l\\'historique si nécessaire.', 
+                    infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session.<br>🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez "Résumer" pour compacter l\\'historique si nécessaire.', 
                     btnResumir: '📝 Résumer', 
                     btnCorregir: '🛠 Couriger' 
                 }
@@ -384,14 +384,19 @@ app.get("/", (req, res) => {
                 else { input.disabled = false; btn.innerText = textos[lang].send; btn.classList.remove('btn-stop'); input.focus(); }
             }
 
-            function abrirInfoTokens() { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalInfo').style.display = 'block'; }
-            function copiarTextoElemento(btn, textoRaw) {
-                const lang = sessionStorage.getItem('idioma') || 'Español';
-                navigator.clipboard.writeText(textoRaw).then(() => {
-                    btn.innerText = textos[lang].copied;
-                    setTimeout(() => { btn.innerText = textos[lang].copy; }, 2000);
-                });
-            }
+            function abrirInfoTokens() { 
+    const lang = sessionStorage.getItem('idioma') || 'Español';
+    
+    // Primero procesamos las negritas con marked
+    let textoProcesado = marked.parse(textos[lang].infoBody);
+    
+    // Reemplazamos el emoji del cerebro por un salto de línea + el emoji
+    textoProcesado = textoProcesado.replace('🧠', '<br>🧠');
+    
+    document.getElementById('txtInfoBody').innerHTML = textoProcesado;
+    document.getElementById('overlay').style.display = 'block'; 
+    document.getElementById('modalInfo').style.display = 'block'; 
+}
 
             function renderChat() {
                 const chatDiv = document.getElementById('chat');
