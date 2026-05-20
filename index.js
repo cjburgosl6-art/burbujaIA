@@ -15,12 +15,11 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 [SAVES_DIR, AUTO_DIR].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); });
 
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
-let systemPrompt = "Eres un asistente de IA útil y conciso. Responde siempre en Español. Si vas a mostrar CUALQUIER tipo de código o comando, es obligatorio que lo pongas dentro de bloques de código Markdown con tres comillas invertidas especificando el lenguaje (por ejemplo ```javascript ... ```), nunca lo pongas en texto plano o líneas simples.";
-
+let systemPrompt = "Eres un asistente de IA útil y conciso. Responde siempre en Español. Si tu respuesta incluye bloques de código o comandos, usa el formato estándar de Markdown (con comillas invertidas) para encerrar el bloque y especifica el lenguaje. Si es una conversación normal, habla de forma totalmente natural, directa y sin dar explicaciones sobre el formato.";
 function calcularTokensTotalesHistorial() {
     if (historial.length === 0) return 0;
     const textoCompleto = historial.join("\n");
-    return Math.ceil(textoCompleto.length / 4) || 0;
+    return encode(textoCompleto).length;
 }
 
 /* --- API --- */
@@ -76,24 +75,35 @@ app.post("/", async (req, res) => {
         });
 
         response.data.on('data', (chunk) => {
-            const lines = chunk.toString().split('\n');
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const json = JSON.parse(line);
-                    if (json.response) {
-                        respuestaCompleta += json.response;
-                        res.write(json.response); 
-                    }
-                } catch (err) { /* Ignorar fragmentos */ }
+    const lines = chunk.toString().split('\n');
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+            const json = JSON.parse(line);
+            if (json.response) {
+                // FILTRO: Limpia esos extraños {3} o cualquier número entre llaves que intente colarse
+                let fragmentoLimpio = json.response.replace(/\{\d+\}/g, '');
+                
+                respuestaCompleta += fragmentoLimpio;
+                res.write(fragmentoLimpio); 
             }
-        });
+        } catch (err) { /* Ignorar fragmentos */ }
+    }
+});
 
         response.data.on('end', () => {
             historial.push("Asistente: " + respuestaCompleta.trim());
             fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
-            const fechaArchivo = ahora.toISOString().slice(0, 10);
-            fs.writeFileSync(path.join(AUTO_DIR, `auto_${fechaArchivo}.md`), historial.join("\n\n"));
+            
+            const año = ahora.getFullYear();
+            const mes = String(ahora.getMonth() + 1).padStart(2, '0');
+            const dia = String(ahora.getDate()).padStart(2, '0');
+            const horas = String(ahora.getHours()).padStart(2, '0');
+            const minutos = String(ahora.getMinutes()).padStart(2, '0');
+            const segundos = String(ahora.getSeconds()).padStart(2, '0');
+            
+            const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.md`;
+            fs.writeFileSync(path.join(AUTO_DIR, nombreArchivoCronologico), historial.join("\n\n"));
             res.end();
         });
 
@@ -141,7 +151,7 @@ app.post("/clear", (req, res) => {
     res.sendStatus(200);
 });
 
-/* --- FRONTEND INTEGRADO SIN INTERFERENCIAS --- */
+/* --- FRONTEND INTEGRADO --- */
 app.get("/", (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -165,11 +175,18 @@ app.get("/", (req, res) => {
             body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; overflow: hidden; transition: 0.3s; }
             #sidebar { width: 300px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: 0.3s; position: absolute; left: -300px; height: 100%; z-index: 1000; }
             #sidebar.open { left: 0; }
-            .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); font-weight: bold; display: flex; justify-content: space-between; }
+            .sidebar-header { padding: 20px 20px 10px 20px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+            
+            /* CONTENEDOR DE PESTAÑAS (TABS) */
+            .tabs-container { display: flex; padding: 0 15px 10px 15px; border-bottom: 1px solid var(--border); gap: 5px; }
+            .tab-btn { flex: 1; padding: 8px 5px; font-size: 11px; font-weight: bold; text-transform: uppercase; border: 1px solid var(--border); background: rgba(0,0,0,0.2); color: var(--text); border-radius: 6px; cursor: pointer; transition: 0.2s; opacity: 0.6; }
+            .tab-btn:hover { opacity: 1; background: rgba(255,255,255,0.03); }
+            .tab-btn.active { opacity: 1; background: var(--primary); color: #white; border-color: var(--primary); }
+
             .file-list { flex: 1; overflow-y: auto; padding: 10px; }
-            .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 13px; border: 1px solid transparent; }
+            .file-item { display: flex; align-items: center; padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 13px; border: 1px solid transparent; background: rgba(0,0,0,0.1); }
             .file-item:hover { background: rgba(255,255,255,0.05); }
-            .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; color: white; text-transform: uppercase; }
+            .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; color: white; text-transform: uppercase; font-weight: bold; }
             .tag-manual { background: var(--primary) !important; }
             #main { flex: 1; display: flex; flex-direction: column; width: 100%; position: relative; }
             #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
@@ -211,6 +228,12 @@ app.get("/", (req, res) => {
                 <span id="txtHistorialTitle">HISTORIAL</span>
                 <span style="cursor:pointer" onclick="toggleMenu()">✕</span>
             </div>
+            
+            <div class="tabs-container">
+                <button id="tabManual" class="tab-btn active" onclick="cambiarPestañaArchivos('manual')">Manuales</button>
+                <button id="tabAuto" class="tab-btn" onclick="cambiarPestañaArchivos('auto')">Autosaves</button>
+            </div>
+
             <div id="fileList" class="file-list"></div>
         </div>
         <div id="main">
@@ -256,14 +279,15 @@ app.get("/", (req, res) => {
             let rawHistorial = [];
             let isGenerating = false; 
             let abortController = null; 
+            let pestañaActiva = 'manual'; // Guardará qué pestaña del sidebar está seleccionada
             
             const renderer = new marked.Renderer();
+            
             renderer.code = function(tokenOrCode, lang) {
                 let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
                 let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
                 if (!code) code = "";
                 
-                // SI NO DETECTA LENGUAJE O ES PLAINTEXT, FORZAMOS SINTAXIS JAVASCRIPT
                 if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
                 
                 let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
@@ -290,58 +314,28 @@ app.get("/", (req, res) => {
 
             const textos = {
                 'Español': { 
-                    send: 'Enviar', 
-                    stop: '⏹ Detener', 
-                    placeholder: 'Escribe algo...', 
-                    pensando: 'Escribiendo', 
-                    historial: 'HISTORIAL', 
-                    saveTitle: 'Guardar conversación', 
-                    savePlaceholder: 'Nombre del archivo', 
-                    confirmSave: 'Guardar ahora', 
-                    cancel: 'Cancelar', 
-                    deleteConfirm: '¿Borrar archivo?', 
-                    copy: 'Copiar Mensaje', 
-                    copied: '¡Copiado!', 
-                    infoTitle: 'Contador de Tokens', 
-                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual.<br>🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de "Resumir" te ayudarán a compactar el chat para no perder el hilo.', 
-                    btnResumir: '📝 Resumir', 
-                    btnCorregir: '🛠 Corregir' 
+                    send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo', 
+                    historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
+                    confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
+                    copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
+                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual. 🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de "Resumir" te ayudarán a compactar el chat para no perder el hilo.', 
+                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir' 
                 },
                 'Inglés': { 
-                    send: 'Send', 
-                    stop: '⏹ Stop', 
-                    placeholder: 'Type something...', 
-                    pensando: 'Typing', 
-                    historial: 'HISTORY', 
-                    saveTitle: 'Save conversation', 
-                    savePlaceholder: 'File name', 
-                    confirmSave: 'Save now', 
-                    cancel: 'Cancel', 
-                    deleteConfirm: 'Delete file?', 
-                    copy: 'Copy Message', 
-                    copied: 'Copied!', 
-                    infoTitle: 'Token Counter', 
-                    infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session.<br>🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the "Summarize" actions to compress your chat history.', 
-                    btnResumir: '📝 Summarize', 
-                    btnCorregir: '🛠 Fix Error' 
+                    send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing', 
+                    historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
+                    confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
+                    copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
+                    infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session. 🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the "Summarize" actions to compress your chat history.', 
+                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error' 
                 },
                 'Francés': { 
-                    send: 'Envoyer', 
-                    stop: '⏹ Arrêter', 
-                    placeholder: 'Écrivez...', 
-                    pensando: 'Écrit', 
-                    historial: 'HISTORIQUE', 
-                    saveTitle: 'Enregistrer le chat', 
-                    savePlaceholder: 'Nom', 
-                    confirmSave: 'Enregistrer', 
-                    cancel: 'Annuler', 
-                    deleteConfirm: 'Supprimer?', 
-                    copy: 'Copier', 
-                    copied: 'Copié!', 
-                    infoTitle: 'Tokens', 
-                    infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session.<br>🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez "Résumer" pour compacter l\\'historique si nécessaire.', 
-                    btnResumir: '📝 Résumer', 
-                    btnCorregir: '🛠 Couriger' 
+                    send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit', 
+                    historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
+                    confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
+                    copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
+                    infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session. 🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez "Résumer" pour compacter l\\'historique si nécessaire.', 
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Couriger' 
                 }
             };
 
@@ -365,7 +359,6 @@ app.get("/", (req, res) => {
                 document.getElementById('btnConfirmSave').innerText = t.confirmSave;
                 document.getElementById('btnCancelSave').innerText = t.cancel;
                 document.getElementById('txtInfoTitle').innerText = t.infoTitle;
-                document.getElementById('txtInfoBody').innerText = t.infoBody;
                 document.getElementById('btnActionResumir').innerText = t.btnResumir;
                 document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
             }
@@ -385,18 +378,22 @@ app.get("/", (req, res) => {
             }
 
             function abrirInfoTokens() { 
-    const lang = sessionStorage.getItem('idioma') || 'Español';
-    
-    // Primero procesamos las negritas con marked
-    let textoProcesado = marked.parse(textos[lang].infoBody);
-    
-    // Reemplazamos el emoji del cerebro por un salto de línea + el emoji
-    textoProcesado = textoProcesado.replace('🧠', '<br>🧠');
-    
-    document.getElementById('txtInfoBody').innerHTML = textoProcesado;
-    document.getElementById('overlay').style.display = 'block'; 
-    document.getElementById('modalInfo').style.display = 'block'; 
-}
+                const lang = sessionStorage.getItem('idioma') || 'Español';
+                let textoProcesado = marked.parse(textos[lang].infoBody);
+                textoProcesado = textoProcesado.replace('🧠', '<br>🧠');
+                
+                document.getElementById('txtInfoBody').innerHTML = textoProcesado;
+                document.getElementById('overlay').style.display = 'block'; 
+                document.getElementById('modalInfo').style.display = 'block'; 
+            }
+
+            function copiarTextoElemento(btn, textoRaw) {
+                const lang = sessionStorage.getItem('idioma') || 'Español';
+                navigator.clipboard.writeText(textoRaw).then(() => {
+                    btn.innerText = textos[lang].copied;
+                    setTimeout(() => { btn.innerText = textos[lang].copy; }, 2000);
+                });
+            }
 
             function renderChat() {
                 const chatDiv = document.getElementById('chat');
@@ -483,12 +480,25 @@ app.get("/", (req, res) => {
                 cambiarEstadoControles(false); abortController = null;
             }
 
+            // FUNCIÓN PARA CONMUTAR EL FILTRADO ENTRE PESTAÑAS
+            function cambiarPestañaArchivos(tipo) {
+                pestañaActiva = tipo;
+                document.getElementById('tabManual').classList.toggle('active', tipo === 'manual');
+                document.getElementById('tabAuto').classList.toggle('active', tipo === 'auto');
+                cargarArchivos(); // Recarga la lista aplicando el filtro visual
+            }
+
             async function cargarArchivos() {
                 const res = await fetch('/files');
-                const files = await res.json();
+                const allFiles = await res.json();
                 const list = document.getElementById('fileList');
                 list.innerHTML = ""; 
-                files.reverse().forEach(archivo => {
+                
+                // FILTRADO: Solo mostramos los archivos que correspondan a la pestaña activa
+                const archivosFiltrados = allFiles.filter(f => f.type === pestañaActiva);
+                
+                // Ordenar cronológicamente invertidos (los últimos guardados salen los primeros)
+                archivosFiltrados.reverse().forEach(archivo => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
                     const tagClass = archivo.type === 'manual' ? 'tag tag-manual' : 'tag';
@@ -530,4 +540,5 @@ app.get("/", (req, res) => {
     </html>
     `);
 });
+
 app.listen(PORT, () => console.log("Use the toggle button to open the chat panel."));
