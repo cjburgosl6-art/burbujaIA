@@ -16,7 +16,8 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
 
-let systemPrompt = "Eres un asistente de IA útil, conciso y preciso. Responde siempre en Español. IMPORTANTE: No incluyas etiquetas de formato del sistema, no repitas el historial del usuario ni inventes estructuras como {3} o comillas flotantes. Habla de manera directa al usuario.";
+// Unificamos un prompt estricto contra alucinaciones de diálogos falsos
+let systemPrompt = "Eres un asistente de IA útil, conciso y preciso. Responde siempre en Español. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.";
 
 function calcularTokensTotalesHistorial() {
     if (historial.length === 0) return 0;
@@ -34,7 +35,7 @@ app.post("/", async (req, res) => {
 
     if (isSystem) {
         const idiomaExtraido = mensaje.replace("Responde siempre en ", "");
-        systemPrompt = `Eres un asistente de IA útil, conciso y preciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: No incluyas etiquetas de formato del sistema, no repitas el historial del usuario ni inventes estructuras extrañas. Habla de manera directa al usuario.`;
+        systemPrompt = `Eres un asistente de IA útil, conciso y preciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.`;
         return res.json({ ok: true });
     }
 
@@ -275,7 +276,7 @@ app.get("/", (req, res) => {
             .btn-copiar { display: inline-flex; align-items: center; justify-content: center; margin-top: 12px; background: var(--btn-copy-bg); color: var(--btn-copy-color); border: 1px solid var(--border); padding: 5px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
             .btn-copiar:hover { background: var(--primary) !important; color: #fff !important; border-color: var(--primary); }
             .top-bar { padding: 10px 15px; background: var(--topbar); display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); min-height: 50px; }
-            .quick-actions { display: flex; gap: 8px; padding: 10px 20px 0 20px; }
+            .quick-actions { display: flex; gap: 8px; padding: 10px 20px 0 20px; margin-bottom: 10px; }
             .action-btn { font-size: 11px; padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 15px; cursor: pointer; opacity: 0.8; transition: 0.2s; }
             .action-btn:hover { background: var(--primary); color: white; border-color: var(--primary); opacity: 1; }
             .action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -343,8 +344,8 @@ app.get("/", (req, res) => {
             <div style="margin-bottom: 15px; text-align: left;">
                 <label style="font-size: 11px; opacity: 0.8;">Formato:</label>
                 <select id="formatoArchivo" style="width: 100%; padding: 8px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; margin-top: 5px; font-size: 12px;">
-                    <option value="json">JSON (.json) - Respaldo perfecto</option>
-                    <option value="md">Markdown (.md) - Legible/Exportable</option>
+                    <option value="json">JSON (.json)</option>
+                    <option value="md">Markdown (.md)</option>
                 </select>
             </div>
             <button id="btnConfirmSave" onclick="confirmarGuardadoManual()" style="width:100%"></button>
@@ -367,8 +368,11 @@ app.get("/", (req, res) => {
                 let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
                 let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
                 if (!code) code = "";
-                if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
-                let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
+                
+                // FIXED: Solucionado el problema donde todo salía como Javascript por defecto
+                if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'plaintext';
+                let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'plaintext';
+                
                 let highlighted = "";
                 try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
                 let escapedCode = "";
@@ -431,7 +435,7 @@ app.get("/", (req, res) => {
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
                     copyCode: 'Copier le Code',
                     infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 peut traiter.', 
-                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer' 
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Régénérer', btnRegenerar: '🔄 Régénérer' 
                 }
             };
 
@@ -632,7 +636,8 @@ app.get("/", (req, res) => {
                             mensaje: accion === 'editar' ? textoEditado : msg, 
                             accion: accion, 
                             indexEdicion: indexEdicion,
-                            newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Responde SOLO con el mensaje directo y fluido para el usuario. No incluyas marcas del sistema, no repitas diálogos pasados tuyos o del usuario de forma explícita ni uses formatos rotos como llaves o números entre llaves."
+                            // FIXED: Reforzadas las instrucciones aquí para que no hable nunca imitando al usuario
+                            newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente fluidamente. Está TERMINANTEMENTE PROHIBIDO imitar al usuario o inventar líneas que simulen ser parte del chat histórico como 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código o scripts, usa siempre bloques de código Markdown con su respectivo lenguaje."
                         }),
                         signal: abortController.signal
                     });
@@ -679,7 +684,10 @@ app.get("/", (req, res) => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
                     const tagClass = archivo.type === 'manual' ? 'tag tag-manual' : 'tag';
-                    item.innerHTML = '<span class="' + tagClass + '">' + archivo.type + '</span><span class="file-link-name" style="flex:1; cursor:pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span><span class="btn-delete-file" style="cursor:pointer; padding-left:10px;">🗑</span>';
+                    
+                    // FIXED: Solucionado el problema del recorte de los nombres. Ahora saltan de línea limpiamente.
+                    item.innerHTML = '<span class="' + tagClass + '">' + archivo.type + '</span><span class="file-link-name" style="flex:1; cursor:pointer; word-break: break-all; white-space: normal;"></span><span class="btn-delete-file" style="cursor:pointer; padding-left:10px;">🗑</span>';
+                    
                     const linkSpan = item.querySelector('.file-link-name');
                     linkSpan.innerText = archivo.name;
                     linkSpan.onclick = () => !isGenerating && cargarFile(archivo.name, archivo.type);
@@ -703,6 +711,7 @@ app.get("/", (req, res) => {
             }
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
             
+            // Eliminación directa sin diálogos como pediste antes
             async function borrarFile(n, t) { 
                 await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); 
                 cargarArchivos(); 
