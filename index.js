@@ -307,23 +307,27 @@ app.get("/", (req, res) => {
             let pestañaActiva = 'manual';
             
             const renderer = new marked.Renderer();
-            
-            renderer.code = function(tokenOrCode, lang) {
-                let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
-                let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
-                if (!code) code = "";
-                
-                if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
-                
-                let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
-                let highlighted = "";
-                try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
-                let escapedCode = "";
-                try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
-                
-                return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">Copiar Código</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
-            };
-            marked.use({ renderer });
+
+renderer.code = function(tokenOrCode, lang) {
+    let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
+    let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
+    if (!code) code = "";
+    
+    if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
+    
+    let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
+    let highlighted = "";
+    try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
+    let escapedCode = "";
+    try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
+    
+    // Obtener idioma seleccionado actualmente
+    const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
+    const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
+    
+    return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">' + textoBotonCc + '</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
+};
+marked.use({ renderer });
 
             function copiarBloqueCodigo(btn, base64Code) {
                 if(!base64Code) return;
@@ -343,6 +347,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
                     confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
+                    copyCode: 'Copiar Código',
                     infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual. 🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de \"Resumir\" te ayudarán a compactar el chat para no perder el hilo.', 
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir' 
                 },
@@ -351,6 +356,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
                     confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
+                    copyCode: 'Copy Code',
                     infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session. 🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the \"Summarize\" actions to compress your chat history.', 
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error' 
                 },
@@ -359,6 +365,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
                     confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
+                    copyCode: 'Copier le Code',
                     infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session. 🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez \"Résumer\" pour compacter l\\'historique si nécessaire.', 
                     btnResumir: '📝 Résumer', btnCorregir: '🛠 Couriger' 
                 }
