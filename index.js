@@ -39,10 +39,18 @@ app.post("/", async (req, res) => {
     }
 
     let mensajeFinal = mensaje;
-    if (accion === 'resumir') mensajeFinal = "Haz un resumen muy breve de nuestra conversación hasta ahora.";
-    if (accion === 'corregir') mensajeFinal = "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
 
-    historial.push("Usuario: " + mensajeFinal);
+    // EFICIENCIA MÁXIMA EN TOKENS: Si es regenerar, borramos la última respuesta del asistente del historial
+    if (accion === 'regenerar') {
+        if (historial.length > 0 && historial[historial.length - 1].startsWith("Asistente:")) {
+            historial.pop(); 
+        }
+    } else {
+        if (accion === 'resumir') mensajeFinal = "Haz un resumen muy breve de nuestra conversación hasta ahora.";
+        if (accion === 'corregir') mensajeFinal = "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
+        
+        historial.push("Usuario: " + mensajeFinal);
+    }
     
     const ahora = new Date();
     const fechaTxt = ahora.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -271,6 +279,7 @@ app.get("/", (req, res) => {
             <div class="quick-actions">
                 <button id="btnActionResumir" class="action-btn" onclick="enviarAccion('resumir')">📝 Resumir</button>
                 <button id="btnActionCorregir" class="action-btn" onclick="enviarAccion('corregir')">🛠 Corregir</button>
+                <button id="btnActionRegenerar" class="action-btn" onclick="enviarAccion('regenerar')" disabled>🔄 Regenerar</button>
             </div>
             <div class="controls">
                 <input id="input" onkeypress="if(event.key==='Enter' && !isGenerating) enviar()">
@@ -278,6 +287,7 @@ app.get("/", (req, res) => {
             </div>
         </div>
         <div id="modalIdioma" class="modal">
+            <h2 style="color:var(--primary); margin-top:0;">Language / Idioma</h2>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Español')">🇪🇸 Español</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Inglés')">🇺🇸 English</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Francés')">🇫🇷 Français</button>
@@ -289,6 +299,7 @@ app.get("/", (req, res) => {
             <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
         </div>
         <div id="modalConfirmacion" class="modal">
+            <h3 id="txtConfirmTitle" style="margin-top:0; color:var(--primary);">¿Confirmar?</h3>
             <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
                 <button id="btnConfirmOk" onclick="ejecutarAccionConfirmada()" style="width:100%"></button>
                 <button id="btnConfirmCancel" onclick="closeAll()" style="width:100%; background:#444; color:white;"></button>
@@ -311,18 +322,19 @@ app.get("/", (req, res) => {
                 let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
                 let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
                 if (!code) code = "";
-                if (!lenguaje) lenguaje = 'javascript';
-                
+                if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
                 let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
                 let highlighted = "";
                 try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
-                
                 let escapedCode = "";
                 try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
+                const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
+                const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
                 
-                return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">Copiar Código</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
+                return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">' + textoBotonCc + '</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
             };
-            marked.use({ renderer });
+            
+            marked.use({ renderer, breaks: true });
 
             function copiarBloqueCodigo(btn, base64Code) {
                 if(!base64Code) return;
@@ -336,7 +348,7 @@ app.get("/", (req, res) => {
                 } catch(e) {}
             }
 
-const textos = {
+            const textos = {
                 'Español': { 
                     send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo', 
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
@@ -344,7 +356,7 @@ const textos = {
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
                     copyCode: 'Copiar Código', clearConfirm: '¿Borrar todo el chat actual?', ok: 'Confirmar',
                     infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual.\\n\\n🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar.', 
-                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir' 
+                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar'
                 },
                 'Inglés': { 
                     send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing', 
@@ -353,7 +365,7 @@ const textos = {
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
                     copyCode: 'Copy Code', clearConfirm: 'Clear current chat?', ok: 'Confirm',
                     infoBody: '🔥 **Tokens Used:** Total tokens used.\\n\\n🧠 **Context Limit (8192):** Maximum memory capacity.', 
-                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error' 
+                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate'
                 },
                 'Francés': { 
                     send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit', 
@@ -362,10 +374,10 @@ const textos = {
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
                     copyCode: 'Copier le Code', clearConfirm: 'Effacer le chat?', ok: 'Confirmer',
                     infoBody: '🔥 **Tokens Utilisés:** Total des tokens.\\n\\n🧠 **Limite de Contexte (8192):** Mémoire maximale de Llama3.', 
-                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger' 
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer'
                 }
             };
-            
+
             function toggleTheme() {
                 const body = document.body;
                 const btn = document.getElementById('themeBtn');
@@ -388,7 +400,7 @@ const textos = {
                 document.getElementById('txtInfoTitle').innerText = t.infoTitle;
                 document.getElementById('btnActionResumir').innerText = t.btnResumir;
                 document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
-                
+                document.getElementById('btnActionRegenerar').innerText = t.btnRegenerar;
                 document.getElementById('btnConfirmOk').innerText = t.ok;
                 document.getElementById('btnConfirmCancel').innerText = t.cancel;
             }
@@ -400,11 +412,15 @@ const textos = {
                 isGenerating = generando;
                 const input = document.getElementById('input');
                 const btn = document.getElementById('btnEnviar');
-                const lang = sessionStorage.getItem('idioma') || 'Español';
                 document.getElementById('btnActionResumir').disabled = generando;
                 document.getElementById('btnActionCorregir').disabled = generando;
-                if(generando) { input.disabled = true; btn.innerText = textos[lang].stop; btn.classList.add('btn-stop'); } 
-                else { input.disabled = false; btn.innerText = textos[lang].send; btn.classList.remove('btn-stop'); input.focus(); }
+                
+                // Habilitar regenerar solo si no se está generando y hay mensajes del asistente en el chat
+                const tieneRespuestas = rawHistorial.some(m => m.startsWith("Asistente:"));
+                document.getElementById('btnActionRegenerar').disabled = generando || !tieneRespuestas;
+
+                if(generando) { input.disabled = true; btn.innerText = textos[sessionStorage.getItem('idioma') || 'Español'].stop; btn.classList.add('btn-stop'); } 
+                else { input.disabled = false; btn.innerText = textos[sessionStorage.getItem('idioma') || 'Español'].send; btn.classList.remove('btn-stop'); input.focus(); }
             }
 
             function abrirInfoTokens() { 
@@ -431,7 +447,10 @@ const textos = {
                     const isUser = m.startsWith('Usuario:');
                     let content = m.split(': ').slice(1).join(': ');
                     if(!isUser) {
-                        content = content.trim().replace(/\{\d+\}/g, '').replace(/\{\s*'\s*\}\}/g, '').replace(/\{\s*"\s*\}\}/g, '');
+                        content = content.trim()
+                            .replace(/\{\d+\}/g, '')
+                            .replace(/\{\s*'\s*\}\}/g, '')
+                            .replace(/\{\s*"\s*\}\}/g, '');
                     }
                     return content.trim() ? { isUser, content } : null;
                 }).filter(i => i !== null).forEach(item => {
@@ -471,8 +490,19 @@ const textos = {
                 if(!accion && !msg) return;
                 cambiarEstadoControles(true); 
                 abortController = new AbortController(); 
-                if(!accion) { rawHistorial.push("Usuario: " + msg); input.value = ""; } 
-                else { rawHistorial.push("Usuario: " + (accion === 'resumir' ? '📝 Resumir...' : '🛠 Corregir...')); }
+
+                if (accion === 'regenerar') {
+                    // Quitamos visualmente del array local la respuesta vieja antes de llamar a la API
+                    if (rawHistorial.length > 0 && rawHistorial[rawHistorial.length - 1].startsWith("Asistente:")) {
+                        rawHistorial.pop();
+                    }
+                } else if(!accion) { 
+                    rawHistorial.push("Usuario: " + msg); 
+                    input.value = ""; 
+                } else { 
+                    rawHistorial.push("Usuario: " + (accion === 'resumir' ? '📝 Resumir...' : '🛠 Corregir...')); 
+                }
+                
                 renderChat();
 
                 const msgDiv = document.createElement('div');
@@ -486,7 +516,11 @@ const textos = {
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ mensaje: msg, accion: accion, newSystemPrompt: "Responde en " + lang + ". Habla de forma natural y fluida." }),
+                        body: JSON.stringify({ 
+                            mensaje: msg, 
+                            accion: accion, 
+                            newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Responde SOLO con el mensaje directo y fluido para el usuario. No incluyas marcas del sistema, no repitas diálogos pasados tuyos o del usuario de forma explícita ni uses formatos rotos como llaves o números entre llaves."
+                        }),
                         signal: abortController.signal
                     });
                     const reader = response.body.getReader();
@@ -543,9 +577,7 @@ const textos = {
                 sessionStorage.setItem('idioma', lang);
                 fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) }).then(() => location.reload());
             }
-            
             function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
-            
             function abrirGuardarManual() { if(!isGenerating) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; } }
             
             function closeAll() { 
@@ -556,6 +588,8 @@ const textos = {
 
             function abrirConfirmarBorradoActual() {
                 if(isGenerating) return;
+                const lang = sessionStorage.getItem('idioma') || 'Español';
+                document.getElementById('txtConfirmTitle').innerText = textos[lang].clearConfirm;
                 callbackConfirmacion = async () => {
                     await fetch('/clear', {method:'POST'});
                     location.reload();
@@ -566,6 +600,8 @@ const textos = {
 
             function abrirConfirmarBorradoFile(n, t) {
                 if(isGenerating) return;
+                const lang = sessionStorage.getItem('idioma') || 'Español';
+                document.getElementById('txtConfirmTitle').innerText = textos[lang].deleteConfirm;
                 callbackConfirmacion = async () => {
                     await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) });
                     cargarArchivos();
@@ -582,7 +618,6 @@ const textos = {
             }
 
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
-            
             async function confirmarGuardadoManual() {
                 const n = document.getElementById('nombreArchivo').value;
                 if(!n) return;
