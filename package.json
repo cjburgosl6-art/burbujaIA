@@ -1,5 +1,5 @@
 {
-  "name": "chatbotFloating",
+  "name": "chatbot",
   "version": "1.0.0",
   "private": true,
   "main": "electron/main.js",

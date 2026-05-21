@@ -265,7 +265,7 @@ app.get("/", (req, res) => {
                 </div>
                 <button onclick="toggleTheme()" id="themeBtn">🌙</button>
                 <button onclick="abrirGuardarManual()">💾</button>
-                <button onclick="borrarActual()" style="background:#333">🗑</button>
+                <button onclick="abrirConfirmarBorradoActual()" style="background:#333">🗑</button>
             </div>
             <div id="chat"></div>
             <div class="quick-actions">
@@ -278,7 +278,6 @@ app.get("/", (req, res) => {
             </div>
         </div>
         <div id="modalIdioma" class="modal">
-            <h2 style="color:var(--primary)">Language / Idioma</h2>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Español')">🇪🇸 Español</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Inglés')">🇺🇸 English</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Francés')">🇫🇷 Français</button>
@@ -288,6 +287,12 @@ app.get("/", (req, res) => {
             <input id="nombreArchivo" style="width:100%; margin-bottom:15px; box-sizing:border-box;">
             <button id="btnConfirmSave" onclick="confirmarGuardadoManual()" style="width:100%"></button>
             <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
+        </div>
+        <div id="modalConfirmacion" class="modal">
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                <button id="btnConfirmOk" onclick="ejecutarAccionConfirmada()" style="width:100%"></button>
+                <button id="btnConfirmCancel" onclick="closeAll()" style="width:100%; background:#444; color:white;"></button>
+            </div>
         </div>
         <div id="modalInfo" class="modal">
             <h3 id="txtInfoTitle" style="color:var(--primary); margin-top: 0;"></h3>
@@ -299,21 +304,23 @@ app.get("/", (req, res) => {
             let isGenerating = false; 
             let abortController = null; 
             let pestañaActiva = 'manual';
+            let callbackConfirmacion = null;
             
             const renderer = new marked.Renderer();
             renderer.code = function(tokenOrCode, lang) {
                 let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
                 let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
                 if (!code) code = "";
-                if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
+                if (!lenguaje) lenguaje = 'javascript';
+                
                 let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
                 let highlighted = "";
                 try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
+                
                 let escapedCode = "";
                 try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
-                const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
-                const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
-                return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">' + textoBotonCc + '</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
+                
+                return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">Copiar Código</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
             };
             marked.use({ renderer });
 
@@ -329,14 +336,14 @@ app.get("/", (req, res) => {
                 } catch(e) {}
             }
 
-            const textos = {
+const textos = {
                 'Español': { 
                     send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo', 
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
-                    confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
+                    confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Eliminar archivo?', 
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
-                    copyCode: 'Copiar Código', clearConfirm: '¿Quieres borrar todo el chat actual?',
-                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual. 🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar.', 
+                    copyCode: 'Copiar Código', clearConfirm: '¿Borrar todo el chat actual?', ok: 'Confirmar',
+                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual.\\n\\n🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar.', 
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir' 
                 },
                 'Inglés': { 
@@ -344,8 +351,8 @@ app.get("/", (req, res) => {
                     historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
                     confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
-                    copyCode: 'Copy Code', clearConfirm: 'Are you sure you want to clear the current chat?',
-                    infoBody: '🔥 **Tokens Used:** Total tokens used. 🧠 **Context Limit (8192):** Maximum memory capacity.', 
+                    copyCode: 'Copy Code', clearConfirm: 'Clear current chat?', ok: 'Confirm',
+                    infoBody: '🔥 **Tokens Used:** Total tokens used.\\n\\n🧠 **Context Limit (8192):** Maximum memory capacity.', 
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error' 
                 },
                 'Francés': { 
@@ -353,12 +360,12 @@ app.get("/", (req, res) => {
                     historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
                     confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
-                    copyCode: 'Copier le Code', clearConfirm: 'Voulez-vous effacer tout le chat actuel?',
-                    infoBody: '🔥 **Tokens Utilisés:** Total des tokens. 🧠 **Limite de Contexte (8192):** Mémoire maximale de Llama3.', 
+                    copyCode: 'Copier le Code', clearConfirm: 'Effacer le chat?', ok: 'Confirmer',
+                    infoBody: '🔥 **Tokens Utilisés:** Total des tokens.\\n\\n🧠 **Limite de Contexte (8192):** Mémoire maximale de Llama3.', 
                     btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger' 
                 }
             };
-
+            
             function toggleTheme() {
                 const body = document.body;
                 const btn = document.getElementById('themeBtn');
@@ -381,6 +388,9 @@ app.get("/", (req, res) => {
                 document.getElementById('txtInfoTitle').innerText = t.infoTitle;
                 document.getElementById('btnActionResumir').innerText = t.btnResumir;
                 document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
+                
+                document.getElementById('btnConfirmOk').innerText = t.ok;
+                document.getElementById('btnConfirmCancel').innerText = t.cancel;
             }
 
             function manejadorBotonPrincipal() { if(isGenerating) { cancelarRespuesta(); } else { enviar(); } }
@@ -421,10 +431,7 @@ app.get("/", (req, res) => {
                     const isUser = m.startsWith('Usuario:');
                     let content = m.split(': ').slice(1).join(': ');
                     if(!isUser) {
-                        content = content.trim()
-                            .replace(/\{\d+\}/g, '')
-                            .replace(/\{\s*'\s*\}\}/g, '')
-                            .replace(/\{\s*"\s*\}\}/g, '');
+                        content = content.trim().replace(/\{\d+\}/g, '').replace(/\{\s*'\s*\}\}/g, '').replace(/\{\s*"\s*\}\}/g, '');
                     }
                     return content.trim() ? { isUser, content } : null;
                 }).filter(i => i !== null).forEach(item => {
@@ -479,11 +486,7 @@ app.get("/", (req, res) => {
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ 
-                            mensaje: msg, 
-                            accion: accion, 
-                            newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Responde SOLO con el mensaje directo y fluido para el usuario. No incluyas marcas del sistema, no repitas diálogos pasados tuyos o del usuario de forma explícita ni uses formatos rotos como llaves o números entre llaves."
-                        }),
+                        body: JSON.stringify({ mensaje: msg, accion: accion, newSystemPrompt: "Responde en " + lang + ". Habla de forma natural y fluida." }),
                         signal: abortController.signal
                     });
                     const reader = response.body.getReader();
@@ -531,7 +534,7 @@ app.get("/", (req, res) => {
                     const linkSpan = item.querySelector('.file-link-name');
                     linkSpan.innerText = archivo.name;
                     linkSpan.onclick = () => !isGenerating && cargarFile(archivo.name, archivo.type);
-                    item.querySelector('.btn-delete-file').onclick = () => !isGenerating && borrarFile(archivo.name, archivo.type);
+                    item.querySelector('.btn-delete-file').onclick = () => !isGenerating && abrirConfirmarBorradoFile(archivo.name, archivo.type);
                     list.appendChild(item);
                 });
             }
@@ -540,16 +543,46 @@ app.get("/", (req, res) => {
                 sessionStorage.setItem('idioma', lang);
                 fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) }).then(() => location.reload());
             }
+            
             function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
+            
             function abrirGuardarManual() { if(!isGenerating) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; } }
-            function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
-            function borrarActual() { 
-                if(!isGenerating && confirm("¿Quieres borrar todo el chat actual?")) {
-                    fetch('/clear', {method:'POST'}).then(() => location.reload());
+            
+            function closeAll() { 
+                document.getElementById('overlay').style.display = 'none'; 
+                document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); 
+                callbackConfirmacion = null;
+            }
+
+            function abrirConfirmarBorradoActual() {
+                if(isGenerating) return;
+                callbackConfirmacion = async () => {
+                    await fetch('/clear', {method:'POST'});
+                    location.reload();
+                };
+                document.getElementById('overlay').style.display = 'block';
+                document.getElementById('modalConfirmacion').style.display = 'block';
+            }
+
+            function abrirConfirmarBorradoFile(n, t) {
+                if(isGenerating) return;
+                callbackConfirmacion = async () => {
+                    await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) });
+                    cargarArchivos();
+                    closeAll();
+                };
+                document.getElementById('overlay').style.display = 'block';
+                document.getElementById('modalConfirmacion').style.display = 'block';
+            }
+
+            function ejecutarAccionConfirmada() {
+                if(typeof callbackConfirmacion === 'function') {
+                    callbackConfirmacion();
                 }
             }
+
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
-            async function borrarFile(n, t) { if(confirm("¿Eliminar archivo?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
+            
             async function confirmarGuardadoManual() {
                 const n = document.getElementById('nombreArchivo').value;
                 if(!n) return;
