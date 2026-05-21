@@ -16,8 +16,7 @@ const AUTO_DIR = path.join(__dirname, "autosaves");
 
 let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
 
-// SANEADO: Unificamos y aclaramos el comportamiento del prompt del sistema para evitar confusiones en Llama3
-let systemPrompt = "Eres un asistente de IA útil, natural y conciso. Responde siempre en Español. IMPORTANTE: Habla de forma totalmente natural, directa y fluida. SOLO si el usuario te pide explícitamente un código fuente, script o comando, utiliza los bloques de código estándar de Markdown (```). No uses comillas inversas ni formatos extraños en conversaciones normales.";
+let systemPrompt = "Eres un asistente de IA útil, conciso y preciso. Responde siempre en Español. IMPORTANTE: No incluyas etiquetas de formato del sistema, no repitas el historial del usuario ni inventes estructuras como {3} o comillas flotantes. Habla de manera directa al usuario.";
 
 function calcularTokensTotalesHistorial() {
     if (historial.length === 0) return 0;
@@ -35,7 +34,7 @@ app.post("/", async (req, res) => {
 
     if (isSystem) {
         const idiomaExtraido = mensaje.replace("Responde siempre en ", "");
-        systemPrompt = `Eres un asistente de IA útil, natural y conciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: Habla de forma totalmente natural, directa y fluida. SOLO si el usuario te pide explícitamente un código fuente, script o comando, utiliza los bloques de código estándar de Markdown (\`\`\`). No uses comillas inversas ni formatos extraños en conversaciones normales.`;
+        systemPrompt = `Eres un asistente de IA útil, conciso y preciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: No incluyas etiquetas de formato del sistema, no repitas el historial del usuario ni inventes estructuras extrañas. Habla de manera directa al usuario.`;
         return res.json({ ok: true });
     }
 
@@ -48,7 +47,7 @@ app.post("/", async (req, res) => {
     const ahora = new Date();
     const fechaTxt = ahora.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     const horaTxt = ahora.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-    const instruccionesConFecha = `${systemPrompt}\n[Información del sistema: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. Usa estos datos únicamente si el usuario te pregunta explícitamente por el tiempo o la fecha actual]`;
+    const instruccionesConFecha = `${systemPrompt}\n[Información del sistema: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. Usa estos datos únicamente si el usuario te pregunta por el tiempo]`;
 
     const textoCompletoHistorial = instruccionesConFecha + "\n\n" + historial.join("\n") + "\nAsistente:";
     const tokensTotalesAntes = encode(textoCompletoHistorial).length;
@@ -84,7 +83,6 @@ app.post("/", async (req, res) => {
                 try {
                     const json = JSON.parse(line);
                     if (json.response) {
-                        // FILTRO ROBUSTO: Limpia residuos extraños que Llama3 genere por obsesión al formato
                         let fragmentoLimpio = json.response
                             .replace(/\{\d+\}/g, '')
                             .replace(/\{\s*'\s*\}\}/g, '')
@@ -93,7 +91,7 @@ app.post("/", async (req, res) => {
                         respuestaCompleta += fragmentoLimpio;
                         res.write(fragmentoLimpio); 
                     }
-                } catch (err) { /* Ignorar fragmentos */ }
+                } catch (err) { /* Ignorar fragmentos corruptos */ }
             }
         });
 
@@ -111,7 +109,6 @@ app.post("/", async (req, res) => {
             const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.md`;
             fs.writeFileSync(path.join(AUTO_DIR, nombreArchivoCronologico), historial.join("\n\n"));
 
-            // LIMITADOR ROTATIVO DE AUTOSAVES
             const archivosAuto = fs.readdirSync(AUTO_DIR)
                 .filter(f => f.endsWith('.md'))
                 .map(f => ({
@@ -129,7 +126,6 @@ app.post("/", async (req, res) => {
                     fs.unlinkSync(archivosAuto[i].ruta);
                 }
             }
-
             res.end();
         });
 
@@ -253,12 +249,10 @@ app.get("/", (req, res) => {
                 <span id="txtHistorialTitle">HISTORIAL</span>
                 <span style="cursor:pointer" onclick="toggleMenu()">✕</span>
             </div>
-            
             <div class="tabs-container">
                 <button id="tabManual" class="tab-btn active" onclick="cambiarPestañaArchivos('manual')">Manuales</button>
                 <button id="tabAuto" class="tab-btn" onclick="cambiarPestañaArchivos('auto')">Autosaves</button>
             </div>
-
             <div id="fileList" class="file-list"></div>
         </div>
         <div id="main">
@@ -307,27 +301,21 @@ app.get("/", (req, res) => {
             let pestañaActiva = 'manual';
             
             const renderer = new marked.Renderer();
-
-renderer.code = function(tokenOrCode, lang) {
-    let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
-    let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
-    if (!code) code = "";
-    
-    if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
-    
-    let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
-    let highlighted = "";
-    try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
-    let escapedCode = "";
-    try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
-    
-    // Obtener idioma seleccionado actualmente
-    const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
-    const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
-    
-    return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">' + textoBotonCc + '</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
-};
-marked.use({ renderer });
+            renderer.code = function(tokenOrCode, lang) {
+                let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
+                let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
+                if (!code) code = "";
+                if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'javascript';
+                let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'javascript';
+                let highlighted = "";
+                try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
+                let escapedCode = "";
+                try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
+                const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
+                const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
+                return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">' + textoBotonCc + '</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
+            };
+            marked.use({ renderer });
 
             function copiarBloqueCodigo(btn, base64Code) {
                 if(!base64Code) return;
@@ -347,8 +335,8 @@ marked.use({ renderer });
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
                     confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
-                    copyCode: 'Copiar Código',
-                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual. 🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar. Al llegar al límite, las funciones de \"Resumir\" te ayudarán a compactar el chat para no perder el hilo.', 
+                    copyCode: 'Copiar Código', clearConfirm: '¿Quieres borrar todo el chat actual?',
+                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual. 🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar.', 
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir' 
                 },
                 'Inglés': { 
@@ -356,8 +344,8 @@ marked.use({ renderer });
                     historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
                     confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
-                    copyCode: 'Copy Code',
-                    infoBody: '🔥 **Tokens Used:** The total number of tokens accumulated in this current session. 🧠 **Context Limit (8192):** The maximum memory capacity Llama3 can handle. If you approach this limit, use the \"Summarize\" actions to compress your chat history.', 
+                    copyCode: 'Copy Code', clearConfirm: 'Are you sure you want to clear the current chat?',
+                    infoBody: '🔥 **Tokens Used:** Total tokens used. 🧠 **Context Limit (8192):** Maximum memory capacity.', 
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error' 
                 },
                 'Francés': { 
@@ -365,9 +353,9 @@ marked.use({ renderer });
                     historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
                     confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
-                    copyCode: 'Copier le Code',
-                    infoBody: '🔥 **Tokens Utilisés:** Le total des tokens accumulés dans la session. 🧠 **Limite de Contexte (8192):** La mémoire maximale que Llama3 peut retenir. Utilisez \"Résumer\" pour compacter l\\'historique si nécessaire.', 
-                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Couriger' 
+                    copyCode: 'Copier le Code', clearConfirm: 'Voulez-vous effacer tout le chat actuel?',
+                    infoBody: '🔥 **Tokens Utilisés:** Total des tokens. 🧠 **Limite de Contexte (8192):** Mémoire maximale de Llama3.', 
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger' 
                 }
             };
 
@@ -412,8 +400,6 @@ marked.use({ renderer });
             function abrirInfoTokens() { 
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 let textoProcesado = marked.parse(textos[lang].infoBody);
-                textoProcesado = textoProcesado.replace('🧠', '<br>🧠');
-                
                 document.getElementById('txtInfoBody').innerHTML = textoProcesado;
                 document.getElementById('overlay').style.display = 'block'; 
                 document.getElementById('modalInfo').style.display = 'block'; 
@@ -434,16 +420,12 @@ marked.use({ renderer });
                 rawHistorial.filter(m => !m.startsWith('Sistema:')).map(m => {
                     const isUser = m.startsWith('Usuario:');
                     let content = m.split(': ').slice(1).join(': ');
-                    
                     if(!isUser) {
-                        content = content.trim();
-                        // CORRECCIÓN: Si el modelo devuelve residuos por fallos de contexto, los limpiamos antes de renderizar
-                        content = content
+                        content = content.trim()
                             .replace(/\{\d+\}/g, '')
                             .replace(/\{\s*'\s*\}\}/g, '')
                             .replace(/\{\s*"\s*\}\}/g, '');
                     }
-                    
                     return content.trim() ? { isUser, content } : null;
                 }).filter(i => i !== null).forEach(item => {
                     if (item.content === '{"ok":true}') return;
@@ -497,8 +479,11 @@ marked.use({ renderer });
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        // CORRECCIÓN: Quitamos la orden agresiva del systemPrompt dinámico para que no fuerce comillas inversas en texto plano
-                        body: JSON.stringify({ mensaje: msg, accion: accion, newSystemPrompt: "Responde en " + lang + ". Habla de forma natural y fluida." }),
+                        body: JSON.stringify({ 
+                            mensaje: msg, 
+                            accion: accion, 
+                            newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Responde SOLO con el mensaje directo y fluido para el usuario. No incluyas marcas del sistema, no repitas diálogos pasados tuyos o del usuario de forma explícita ni uses formatos rotos como llaves o números entre llaves."
+                        }),
                         signal: abortController.signal
                     });
                     const reader = response.body.getReader();
@@ -508,10 +493,7 @@ marked.use({ renderer });
                         const { done, value } = await reader.read();
                         if (done) break;
                         let chunkTxt = decoder.decode(value, { stream: true });
-                        
-                        // Limpieza en tiempo real durante el streaming
                         chunkTxt = chunkTxt.replace(/\{\d+\}/g, '').replace(/\{\s*'\s*\}\}/g, '').replace(/\{\s*"\s*\}\}/g, '');
-                        
                         assistantMsg += chunkTxt;
                         if(primerChunk) { msgDiv.innerHTML = ""; primerChunk = false; }
                         msgDiv.innerHTML = marked.parse(assistantMsg);
@@ -540,9 +522,7 @@ marked.use({ renderer });
                 const allFiles = await res.json();
                 const list = document.getElementById('fileList');
                 list.innerHTML = ""; 
-                
                 const archivosFiltrados = allFiles.filter(f => f.type === pestañaActiva);
-                
                 archivosFiltrados.reverse().forEach(archivo => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
@@ -563,9 +543,13 @@ marked.use({ renderer });
             function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
             function abrirGuardarManual() { if(!isGenerating) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; } }
             function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
-            function borrarActual() { if(!isGenerating && confirm("Clear?")) fetch('/clear', {method:'POST'}).then(() => location.reload()); }
+            function borrarActual() { 
+                if(!isGenerating && confirm("¿Quieres borrar todo el chat actual?")) {
+                    fetch('/clear', {method:'POST'}).then(() => location.reload());
+                }
+            }
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
-            async function borrarFile(n, t) { if(confirm("Delete?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
+            async function borrarFile(n, t) { if(confirm("¿Eliminar archivo?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
             async function confirmarGuardadoManual() {
                 const n = document.getElementById('nombreArchivo').value;
                 if(!n) return;
