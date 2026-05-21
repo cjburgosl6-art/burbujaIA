@@ -166,15 +166,25 @@ app.get("/current-tokens", (req, res) => { res.json({ totalAcumulado: calcularTo
 app.get("/get-historial", (req, res) => { res.json(historial); });
 
 app.get("/files", (req, res) => {
-    const manual = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json')).map(f => ({ name: f, type: 'manual' }));
-    const auto = fs.readdirSync(AUTO_DIR).filter(f => f.endsWith('.json')).map(f => ({ name: f, type: 'auto' }));
+    const manual = fs.readdirSync(SAVES_DIR)
+        .filter(f => f.endsWith('.json') || f.endsWith('.md'))
+        .map(f => ({ name: f, type: 'manual' }));
+    const auto = fs.readdirSync(AUTO_DIR)
+        .filter(f => f.endsWith('.json'))
+        .map(f => ({ name: f, type: 'auto' }));
     res.json([...manual, ...auto]);
 });
 
 app.post("/save-manual", (req, res) => {
-    const { nombre } = req.body;
-    const safeName = nombre.replace(/[^a-z0-9]/gi, '_') + ".json";
-    fs.writeFileSync(path.join(SAVES_DIR, safeName), JSON.stringify(historial, null, 2));
+    const { nombre, formato } = req.body;
+    const ext = formato === 'md' ? '.md' : '.json';
+    const safeName = nombre.replace(/[^a-z0-9]/gi, '_') + ext;
+    
+    if (formato === 'md') {
+        fs.writeFileSync(path.join(SAVES_DIR, safeName), historial.join("\n\n"));
+    } else {
+        fs.writeFileSync(path.join(SAVES_DIR, safeName), JSON.stringify(historial, null, 2));
+    }
     res.sendStatus(200);
 });
 
@@ -182,7 +192,12 @@ app.post("/load", (req, res) => {
     const { name, type } = req.body;
     const dir = type === 'auto' ? AUTO_DIR : SAVES_DIR;
     const contenido = fs.readFileSync(path.join(dir, name), "utf-8");
-    historial = JSON.parse(contenido);
+    
+    if (name.endsWith('.md')) {
+        historial = contenido.split("\n\n").filter(linea => linea.trim() !== "");
+    } else {
+        historial = JSON.parse(contenido);
+    }
     fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
     res.sendStatus(200);
 });
@@ -325,6 +340,13 @@ app.get("/", (req, res) => {
         <div id="modalGuardar" class="modal">
             <h3 id="txtSaveTitle">Guardar</h3>
             <input id="nombreArchivo" style="width:100%; margin-bottom:15px; box-sizing:border-box;">
+            <div style="margin-bottom: 15px; text-align: left;">
+                <label style="font-size: 11px; opacity: 0.8;">Formato:</label>
+                <select id="formatoArchivo" style="width: 100%; padding: 8px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; margin-top: 5px; font-size: 12px;">
+                    <option value="json">JSON (.json) - Respaldo perfecto</option>
+                    <option value="md">Markdown (.md) - Legible/Exportable</option>
+                </select>
+            </div>
             <button id="btnConfirmSave" onclick="confirmarGuardadoManual()" style="width:100%"></button>
             <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
         </div>
@@ -680,12 +702,23 @@ app.get("/", (req, res) => {
                 }
             }
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
-            async function borrarFile(n, t) { if(confirm("¿Eliminar archivo?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
+            
+            async function borrarFile(n, t) { 
+                await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); 
+                cargarArchivos(); 
+            }
+            
             async function confirmarGuardadoManual() {
                 const n = document.getElementById('nombreArchivo').value;
+                const f = document.getElementById('formatoArchivo').value;
                 if(!n) return;
-                await fetch('/save-manual', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nombre:n}) });
+                await fetch('/save-manual', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({ nombre: n, formato: f }) 
+                });
                 closeAll();
+                cargarArchivos();
             }
 
             window.onload = async () => {
