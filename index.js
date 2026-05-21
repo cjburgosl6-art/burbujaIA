@@ -133,14 +133,13 @@ app.post("/", async (req, res) => {
             const minutos = String(ahora.getMinutes()).padStart(2, '0');
             const segundos = String(ahora.getSeconds()).padStart(2, '0');
             
-            // Guardamos como JSON interno para no romper los bloques de código al recargar
             const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.json`;
             fs.writeFileSync(path.join(AUTO_DIR, nombreArchivoCronologico), JSON.stringify(historial, null, 2));
 
             const archivosAuto = fs.readdirSync(AUTO_DIR)
                 .filter(f => f.endsWith('.json'))
                 .map(f => ({
-                    nombre: f,
+                    name: f,
                     ruta: path.join(AUTO_DIR, f),
                     mtime: fs.statSync(path.join(AUTO_DIR, f)).mtime
                 }));
@@ -384,14 +383,13 @@ app.get("/", (req, res) => {
                 } catch(e) {}
             }
 
-            // Cambiamos infoBody a HTML explícito con <br> para asegurar los saltos de línea perfectos
             const textos = {
                 'Español': { 
                     send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo', 
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
                     confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
-                    copyCode: 'Copiar Código', clearConfirm: '¿Quieres borrar todo el chat actual?',
+                    copyCode: 'Copiar Código',
                     infoBody: '🔥 <b>Tokens Consumidos:</b> Es el total de tokens acumulados en la sesión actual.<br><br>🧠 <b>Límite de Contexto (8192):</b> Es la memoria máxima que el modelo Llama3 puede recordar de forma simultánea.', 
                     btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar' 
                 },
@@ -400,7 +398,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
                     confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
-                    copyCode: 'Copy Code', clearConfirm: 'Are you sure you want to clear the current chat?',
+                    copyCode: 'Copy Code',
                     infoBody: '🔥 <b>Tokens Used:</b> Total tokens used in the current session.<br><br>🧠 <b>Context Limit (8192):</b> Maximum memory capacity that Llama3 model can handle at once.', 
                     btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate' 
                 },
@@ -409,7 +407,7 @@ app.get("/", (req, res) => {
                     historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
                     confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
-                    copyCode: 'Copier le Code', clearConfirm: 'Voulez-vous effacer tout le chat actuel?',
+                    copyCode: 'Copier le Code',
                     infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 peut traiter.', 
                     btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer' 
                 }
@@ -462,7 +460,6 @@ app.get("/", (req, res) => {
 
             function abrirInfoTokens() { 
                 const lang = sessionStorage.getItem('idioma') || 'Español';
-                // Inyectamos como HTML directo para respetar las etiquetas <br> de salto de línea
                 document.getElementById('txtInfoBody').innerHTML = textos[lang].infoBody;
                 document.getElementById('overlay').style.display = 'block'; 
                 document.getElementById('modalInfo').style.display = 'block'; 
@@ -676,8 +673,9 @@ app.get("/", (req, res) => {
             function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
             function abrirGuardarManual() { if(!isGenerating) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; } }
             function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
+            
             function borrarActual() { 
-                if(!isGenerating && confirm("¿Quieres borrar todo el chat actual?")) {
+                if(!isGenerating) {
                     fetch('/clear', {method:'POST'}).then(() => location.reload());
                 }
             }
