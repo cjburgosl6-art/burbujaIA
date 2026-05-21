@@ -26,7 +26,7 @@ function calcularTokensTotalesHistorial() {
 
 /* --- API --- */
 app.post("/", async (req, res) => {
-    const { mensaje, isSystem, newSystemPrompt, accion } = req.body;
+    const { mensaje, isSystem, newSystemPrompt, accion, indexEdicion } = req.body;
     
     if (newSystemPrompt) {
         systemPrompt = newSystemPrompt;
@@ -40,10 +40,27 @@ app.post("/", async (req, res) => {
 
     let mensajeFinal = mensaje;
 
-    // EFICIENCIA MÁXIMA EN TOKENS: Si es regenerar, borramos la última respuesta del asistente del historial
     if (accion === 'regenerar') {
         if (historial.length > 0 && historial[historial.length - 1].startsWith("Asistente:")) {
             historial.pop(); 
+        }
+    } else if (accion === 'editar') {
+        let contadorMensajesVisibles = 0;
+        let indiceRealHistorial = -1;
+
+        for (let i = 0; i < historial.length; i++) {
+            if (!historial[i].startsWith('Sistema:')) {
+                if (contadorMensajesVisibles === parseInt(indexEdicion)) {
+                    indiceRealHistorial = i;
+                    break;
+                }
+                contadorMensajesVisibles++;
+            }
+        }
+
+        if (indiceRealHistorial !== -1 && historial[indiceRealHistorial].startsWith("Usuario:")) {
+            historial = historial.slice(0, indiceRealHistorial);
+            historial.push("Usuario: " + mensajeFinal);
         }
     } else {
         if (accion === 'resumir') mensajeFinal = "Haz un resumen muy breve de nuestra conversación hasta ahora.";
@@ -104,8 +121,10 @@ app.post("/", async (req, res) => {
         });
 
         response.data.on('end', () => {
-            historial.push("Asistente: " + respuestaCompleta.trim());
-            fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+            if (respuestaCompleta.trim()) {
+                historial.push("Asistente: " + respuestaCompleta.trim());
+                fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+            }
             
             const año = ahora.getFullYear();
             const mes = String(ahora.getMonth() + 1).padStart(2, '0');
@@ -114,11 +133,12 @@ app.post("/", async (req, res) => {
             const minutos = String(ahora.getMinutes()).padStart(2, '0');
             const segundos = String(ahora.getSeconds()).padStart(2, '0');
             
-            const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.md`;
-            fs.writeFileSync(path.join(AUTO_DIR, nombreArchivoCronologico), historial.join("\n\n"));
+            // Guardamos como JSON interno para no romper los bloques de código al recargar
+            const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.json`;
+            fs.writeFileSync(path.join(AUTO_DIR, nombreArchivoCronologico), JSON.stringify(historial, null, 2));
 
             const archivosAuto = fs.readdirSync(AUTO_DIR)
-                .filter(f => f.endsWith('.md'))
+                .filter(f => f.endsWith('.json'))
                 .map(f => ({
                     nombre: f,
                     ruta: path.join(AUTO_DIR, f),
@@ -147,15 +167,15 @@ app.get("/current-tokens", (req, res) => { res.json({ totalAcumulado: calcularTo
 app.get("/get-historial", (req, res) => { res.json(historial); });
 
 app.get("/files", (req, res) => {
-    const manual = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.md')).map(f => ({ name: f, type: 'manual' }));
-    const auto = fs.readdirSync(AUTO_DIR).filter(f => f.endsWith('.md')).map(f => ({ name: f, type: 'auto' }));
+    const manual = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json')).map(f => ({ name: f, type: 'manual' }));
+    const auto = fs.readdirSync(AUTO_DIR).filter(f => f.endsWith('.json')).map(f => ({ name: f, type: 'auto' }));
     res.json([...manual, ...auto]);
 });
 
 app.post("/save-manual", (req, res) => {
     const { nombre } = req.body;
-    const safeName = nombre.replace(/[^a-z0-9]/gi, '_') + ".md";
-    fs.writeFileSync(path.join(SAVES_DIR, safeName), historial.join("\n\n"));
+    const safeName = nombre.replace(/[^a-z0-9]/gi, '_') + ".json";
+    fs.writeFileSync(path.join(SAVES_DIR, safeName), JSON.stringify(historial, null, 2));
     res.sendStatus(200);
 });
 
@@ -163,7 +183,7 @@ app.post("/load", (req, res) => {
     const { name, type } = req.body;
     const dir = type === 'auto' ? AUTO_DIR : SAVES_DIR;
     const contenido = fs.readFileSync(path.join(dir, name), "utf-8");
-    historial = contenido.split("\n\n").filter(l => l.trim() !== "");
+    historial = JSON.parse(contenido);
     fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
     res.sendStatus(200);
 });
@@ -218,9 +238,20 @@ app.get("/", (req, res) => {
             .tag { font-size: 9px; padding: 2px 5px; border-radius: 3px; background: #444; margin-right: 10px; color: white; text-transform: uppercase; font-weight: bold; }
             .tag-manual { background: var(--primary) !important; }
             #main { flex: 1; display: flex; flex-direction: column; width: 100%; position: relative; }
-            #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+            #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth; }
+            
             .msg { padding: 15px 15px 12px 15px; border-radius: 8px; background: var(--panel); border-left: 4px solid var(--primary); max-width: 85%; box-shadow: 0 2px 5px rgba(0,0,0,0.1); word-wrap: break-word; position: relative; }
-            .user { border-left: none; border-right: 4px solid #555; background: var(--msg-user); margin-left: auto; }
+            .user { border-left: none; border-right: 4px solid #555; background: var(--msg-user); margin-left: auto; padding-right: 35px; }
+            
+            .btn-editar-msg { display: none; position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; font-size: 12px; opacity: 0.4; transition: 0.2s; padding: 2px; }
+            .user:hover .btn-editar-msg { display: block; }
+            .btn-editar-msg:hover { opacity: 1; transform: scale(1.1); }
+            .edit-textarea-box { width: 100%; display: flex; flex-direction: column; gap: 8px; margin-top: 5px; }
+            .edit-textarea { width: 100%; min-height: 60px; background: #000; color: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 8px; box-sizing: border-box; font-family: inherit; resize: vertical; }
+            .edit-actions { display: flex; gap: 6px; justify-content: flex-end; }
+            .edit-btn-ok { background: var(--primary); color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: bold; }
+            .edit-btn-cancel { background: #444; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+
             .code-block-wrapper { position: relative; margin: 14px 0; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
             .code-block-header { display: flex; justify-content: space-between; align-items: center; background: #111; padding: 5px 12px; font-size: 11px; font-family: monospace; color: #888; border-bottom: 1px solid var(--border); user-select: none; }
             .btn-copiar-codigo { background: none; border: none; color: #888; cursor: pointer; font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 4px; transition: 0.2s; }
@@ -273,7 +304,7 @@ app.get("/", (req, res) => {
                 </div>
                 <button onclick="toggleTheme()" id="themeBtn">🌙</button>
                 <button onclick="abrirGuardarManual()">💾</button>
-                <button onclick="abrirConfirmarBorradoActual()" style="background:#333">🗑</button>
+                <button onclick="borrarActual()" style="background:#333">🗑</button>
             </div>
             <div id="chat"></div>
             <div class="quick-actions">
@@ -287,7 +318,7 @@ app.get("/", (req, res) => {
             </div>
         </div>
         <div id="modalIdioma" class="modal">
-            <h2 style="color:var(--primary); margin-top:0;">Language / Idioma</h2>
+            <h2 style="color:var(--primary)">Language / Idioma</h2>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Español')">🇪🇸 Español</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Inglés')">🇺🇸 English</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Francés')">🇫🇷 Français</button>
@@ -298,16 +329,9 @@ app.get("/", (req, res) => {
             <button id="btnConfirmSave" onclick="confirmarGuardadoManual()" style="width:100%"></button>
             <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
         </div>
-        <div id="modalConfirmacion" class="modal">
-            <h3 id="txtConfirmTitle" style="margin-top:0; color:var(--primary);">¿Confirmar?</h3>
-            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
-                <button id="btnConfirmOk" onclick="ejecutarAccionConfirmada()" style="width:100%"></button>
-                <button id="btnConfirmCancel" onclick="closeAll()" style="width:100%; background:#444; color:white;"></button>
-            </div>
-        </div>
         <div id="modalInfo" class="modal">
             <h3 id="txtInfoTitle" style="color:var(--primary); margin-top: 0;"></h3>
-            <div id="txtInfoBody" style="font-size: 13px; text-align: left; line-height: 1.5; margin-bottom: 20px;"></div>
+            <div id="txtInfoBody" style="font-size: 13px; text-align: left; line-height: 1.6; margin-bottom: 20px;"></div>
             <button onclick="closeAll()" style="width:100%">Ok</button>
         </div>
         <script>
@@ -315,7 +339,7 @@ app.get("/", (req, res) => {
             let isGenerating = false; 
             let abortController = null; 
             let pestañaActiva = 'manual';
-            let callbackConfirmacion = null;
+            let usuarioHizoScrollArriba = false; 
             
             const renderer = new marked.Renderer();
             renderer.code = function(tokenOrCode, lang) {
@@ -330,11 +354,23 @@ app.get("/", (req, res) => {
                 try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
                 const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
                 const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
-                
                 return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">' + textoBotonCc + '</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
             };
-            
             marked.use({ renderer, breaks: true });
+
+            document.getElementById('chat').addEventListener('scroll', () => {
+                const chatDiv = document.getElementById('chat');
+                const alFondo = chatDiv.scrollHeight - chatDiv.scrollTop <= chatDiv.clientHeight + 40;
+                if (isGenerating) {
+                    if (!alFondo) usuarioHizoScrollArriba = true;
+                    else usuarioHizoScrollArriba = false;
+                }
+            });
+
+            function gestionarScrollChat() {
+                const chatDiv = document.getElementById('chat');
+                if (!usuarioHizoScrollArriba) chatDiv.scrollTop = chatDiv.scrollHeight;
+            }
 
             function copiarBloqueCodigo(btn, base64Code) {
                 if(!base64Code) return;
@@ -348,33 +384,34 @@ app.get("/", (req, res) => {
                 } catch(e) {}
             }
 
+            // Cambiamos infoBody a HTML explícito con <br> para asegurar los saltos de línea perfectos
             const textos = {
                 'Español': { 
                     send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo', 
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
-                    confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Eliminar archivo?', 
+                    confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
-                    copyCode: 'Copiar Código', clearConfirm: '¿Borrar todo el chat actual?', ok: 'Confirmar',
-                    infoBody: '🔥 **Tokens Consumidos:** Es el total de tokens acumulados en la sesión actual.\\n\\n🧠 **Límite de Contexto (8192):** Es la memoria máxima que el modelo Llama3 puede recordar.', 
-                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar'
+                    copyCode: 'Copiar Código', clearConfirm: '¿Quieres borrar todo el chat actual?',
+                    infoBody: '🔥 <b>Tokens Consumidos:</b> Es el total de tokens acumulados en la sesión actual.<br><br>🧠 <b>Límite de Contexto (8192):</b> Es la memoria máxima que el modelo Llama3 puede recordar de forma simultánea.', 
+                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar' 
                 },
                 'Inglés': { 
                     send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing', 
                     historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
                     confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
-                    copyCode: 'Copy Code', clearConfirm: 'Clear current chat?', ok: 'Confirm',
-                    infoBody: '🔥 **Tokens Used:** Total tokens used.\\n\\n🧠 **Context Limit (8192):** Maximum memory capacity.', 
-                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate'
+                    copyCode: 'Copy Code', clearConfirm: 'Are you sure you want to clear the current chat?',
+                    infoBody: '🔥 <b>Tokens Used:</b> Total tokens used in the current session.<br><br>🧠 <b>Context Limit (8192):</b> Maximum memory capacity that Llama3 model can handle at once.', 
+                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate' 
                 },
                 'Francés': { 
                     send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit', 
                     historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
                     confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
-                    copyCode: 'Copier le Code', clearConfirm: 'Effacer le chat?', ok: 'Confirmer',
-                    infoBody: '🔥 **Tokens Utilisés:** Total des tokens.\\n\\n🧠 **Limite de Contexte (8192):** Mémoire maximale de Llama3.', 
-                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer'
+                    copyCode: 'Copier le Code', clearConfirm: 'Voulez-vous effacer tout le chat actuel?',
+                    infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 peut traiter.', 
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer' 
                 }
             };
 
@@ -401,8 +438,6 @@ app.get("/", (req, res) => {
                 document.getElementById('btnActionResumir').innerText = t.btnResumir;
                 document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
                 document.getElementById('btnActionRegenerar').innerText = t.btnRegenerar;
-                document.getElementById('btnConfirmOk').innerText = t.ok;
-                document.getElementById('btnConfirmCancel').innerText = t.cancel;
             }
 
             function manejadorBotonPrincipal() { if(isGenerating) { cancelarRespuesta(); } else { enviar(); } }
@@ -410,23 +445,25 @@ app.get("/", (req, res) => {
 
             function cambiarEstadoControles(generando) {
                 isGenerating = generando;
+                if (!generando) usuarioHizoScrollArriba = false;
+                
                 const input = document.getElementById('input');
                 const btn = document.getElementById('btnEnviar');
+                const lang = sessionStorage.getItem('idioma') || 'Español';
                 document.getElementById('btnActionResumir').disabled = generando;
                 document.getElementById('btnActionCorregir').disabled = generando;
                 
-                // Habilitar regenerar solo si no se está generando y hay mensajes del asistente en el chat
                 const tieneRespuestas = rawHistorial.some(m => m.startsWith("Asistente:"));
                 document.getElementById('btnActionRegenerar').disabled = generando || !tieneRespuestas;
 
-                if(generando) { input.disabled = true; btn.innerText = textos[sessionStorage.getItem('idioma') || 'Español'].stop; btn.classList.add('btn-stop'); } 
-                else { input.disabled = false; btn.innerText = textos[sessionStorage.getItem('idioma') || 'Español'].send; btn.classList.remove('btn-stop'); input.focus(); }
+                if(generando) { input.disabled = true; btn.innerText = textos[lang].stop; btn.classList.add('btn-stop'); } 
+                else { input.disabled = false; btn.innerText = textos[lang].send; btn.classList.remove('btn-stop'); input.focus(); }
             }
 
             function abrirInfoTokens() { 
                 const lang = sessionStorage.getItem('idioma') || 'Español';
-                let textoProcesado = marked.parse(textos[lang].infoBody);
-                document.getElementById('txtInfoBody').innerHTML = textoProcesado;
+                // Inyectamos como HTML directo para respetar las etiquetas <br> de salto de línea
+                document.getElementById('txtInfoBody').innerHTML = textos[lang].infoBody;
                 document.getElementById('overlay').style.display = 'block'; 
                 document.getElementById('modalInfo').style.display = 'block'; 
             }
@@ -439,11 +476,40 @@ app.get("/", (req, res) => {
                 });
             }
 
+            function habilitarEdicionMensaje(index, btn) {
+                if (isGenerating) return;
+                const msgBox = btn.closest('.msg');
+                let mensajesVisibles = rawHistorial.filter(m => !m.startsWith('Sistema:'));
+                let rawMsg = mensajesVisibles[index];
+                let textoOriginal = rawMsg.split(': ').slice(1).join(': ');
+
+                const contenedorOriginal = msgBox.innerHTML;
+                msgBox.innerHTML = \`
+                    <div class="edit-textarea-box">
+                        <textarea class="edit-textarea">\` + textoOriginal.replace(/\`/g, '\\\`').replace(/\\\\\$/g, '\\\\$') + \`</textarea>
+                        <div class="edit-actions">
+                            <button class="edit-btn-cancel">Cancelar</button>
+                            <button class="edit-btn-ok">Guardar y Enviar</button>
+                        </div>
+                    </div>
+                \`;
+
+                msgBox.querySelector('.edit-btn-cancel').onclick = () => { msgBox.innerHTML = contenedorOriginal; };
+                msgBox.querySelector('.edit-btn-ok').onclick = () => {
+                    const nuevoTexto = msgBox.querySelector('.edit-textarea').value;
+                    if (!nuevoTexto.trim()) return;
+                    enviar(null, 'editar', index, nuevoTexto);
+                };
+            }
+
             function renderChat() {
                 const chatDiv = document.getElementById('chat');
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 chatDiv.innerHTML = "";
-                rawHistorial.filter(m => !m.startsWith('Sistema:')).map(m => {
+                
+                let mensajesVisibles = rawHistorial.filter(m => !m.startsWith('Sistema:'));
+
+                mensajesVisibles.map((m, index) => {
                     const isUser = m.startsWith('Usuario:');
                     let content = m.split(': ').slice(1).join(': ');
                     if(!isUser) {
@@ -452,15 +518,25 @@ app.get("/", (req, res) => {
                             .replace(/\{\s*'\s*\}\}/g, '')
                             .replace(/\{\s*"\s*\}\}/g, '');
                     }
-                    return content.trim() ? { isUser, content } : null;
+                    return content.trim() ? { isUser, content, index } : null;
                 }).filter(i => i !== null).forEach(item => {
                     if (item.content === '{"ok":true}') return;
+                    
                     const msgBox = document.createElement('div');
                     msgBox.className = item.isUser ? 'msg user' : 'msg';
+                    
                     const contentDiv = document.createElement('div');
                     contentDiv.innerHTML = marked.parse(item.content);
                     msgBox.appendChild(contentDiv);
-                    if(!item.isUser) {
+                    
+                    if(item.isUser) {
+                        const btnEditar = document.createElement('button');
+                        btnEditar.className = 'btn-editar-msg';
+                        btnEditar.innerHTML = '✏️';
+                        btnEditar.title = 'Editar mensaje';
+                        btnEditar.onclick = () => habilitarEdicionMensaje(item.index, btnEditar);
+                        msgBox.appendChild(btnEditar);
+                    } else {
                         const btnCopiar = document.createElement('button');
                         btnCopiar.className = 'btn-copiar';
                         btnCopiar.innerText = textos[lang].copy;
@@ -469,7 +545,7 @@ app.get("/", (req, res) => {
                     }
                     chatDiv.appendChild(msgBox);
                 });
-                chatDiv.scrollTop = chatDiv.scrollHeight;
+                gestionarScrollChat();
             }
 
             async function actualizarContadorTokensDesdeServidor() {
@@ -482,19 +558,36 @@ app.get("/", (req, res) => {
 
             async function enviarAccion(tipo) { if(!isGenerating) enviar(null, tipo); }
 
-            async function enviar(e, accion = null) {
+            async function enviar(e, accion = null, indexEdicion = null, textoEditado = null) {
                 const input = document.getElementById('input');
                 const chatDiv = document.getElementById('chat');
                 const msg = input.value;
                 const lang = sessionStorage.getItem('idioma') || 'Español';
+                
                 if(!accion && !msg) return;
                 cambiarEstadoControles(true); 
                 abortController = new AbortController(); 
 
                 if (accion === 'regenerar') {
-                    // Quitamos visualmente del array local la respuesta vieja antes de llamar a la API
                     if (rawHistorial.length > 0 && rawHistorial[rawHistorial.length - 1].startsWith("Asistente:")) {
                         rawHistorial.pop();
+                    }
+                } else if (accion === 'editar') {
+                    let contadorMensajesVisibles = 0;
+                    let indiceRealHistorial = -1;
+
+                    for (let i = 0; i < rawHistorial.length; i++) {
+                        if (!rawHistorial[i].startsWith('Sistema:')) {
+                            if (contadorMensajesVisibles === indexEdicion) {
+                                indiceRealHistorial = i;
+                                break;
+                            }
+                            contadorMensajesVisibles++;
+                        }
+                    }
+                    if (indiceRealHistorial !== -1) {
+                        rawHistorial = rawHistorial.slice(0, indiceRealHistorial);
+                        rawHistorial.push("Usuario: " + textoEditado);
                     }
                 } else if(!accion) { 
                     rawHistorial.push("Usuario: " + msg); 
@@ -509,7 +602,7 @@ app.get("/", (req, res) => {
                 msgDiv.className = 'msg';
                 msgDiv.innerHTML = '<div class="typing-container"><span>' + textos[lang].pensando + '</span><span class="typing-dots"></span></div>';
                 chatDiv.appendChild(msgDiv);
-                chatDiv.scrollTop = chatDiv.scrollHeight;
+                gestionarScrollChat();
                 let primerChunk = true;
 
                 try {
@@ -517,8 +610,9 @@ app.get("/", (req, res) => {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ 
-                            mensaje: msg, 
+                            mensaje: accion === 'editar' ? textoEditado : msg, 
                             accion: accion, 
+                            indexEdicion: indexEdicion,
                             newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Responde SOLO con el mensaje directo y fluido para el usuario. No incluyas marcas del sistema, no repitas diálogos pasados tuyos o del usuario de forma explícita ni uses formatos rotos como llaves o números entre llaves."
                         }),
                         signal: abortController.signal
@@ -534,9 +628,11 @@ app.get("/", (req, res) => {
                         assistantMsg += chunkTxt;
                         if(primerChunk) { msgDiv.innerHTML = ""; primerChunk = false; }
                         msgDiv.innerHTML = marked.parse(assistantMsg);
-                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                        gestionarScrollChat(); 
                     }
-                    rawHistorial.push("Asistente: " + assistantMsg);
+                    if (assistantMsg.trim()) {
+                        rawHistorial.push("Asistente: " + assistantMsg.trim());
+                    }
                     renderChat();
                     await actualizarContadorTokensDesdeServidor();
                 } catch (err) {
@@ -568,7 +664,7 @@ app.get("/", (req, res) => {
                     const linkSpan = item.querySelector('.file-link-name');
                     linkSpan.innerText = archivo.name;
                     linkSpan.onclick = () => !isGenerating && cargarFile(archivo.name, archivo.type);
-                    item.querySelector('.btn-delete-file').onclick = () => !isGenerating && abrirConfirmarBorradoFile(archivo.name, archivo.type);
+                    item.querySelector('.btn-delete-file').onclick = () => !isGenerating && borrarFile(archivo.name, archivo.type);
                     list.appendChild(item);
                 });
             }
@@ -579,45 +675,14 @@ app.get("/", (req, res) => {
             }
             function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
             function abrirGuardarManual() { if(!isGenerating) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; } }
-            
-            function closeAll() { 
-                document.getElementById('overlay').style.display = 'none'; 
-                document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); 
-                callbackConfirmacion = null;
-            }
-
-            function abrirConfirmarBorradoActual() {
-                if(isGenerating) return;
-                const lang = sessionStorage.getItem('idioma') || 'Español';
-                document.getElementById('txtConfirmTitle').innerText = textos[lang].clearConfirm;
-                callbackConfirmacion = async () => {
-                    await fetch('/clear', {method:'POST'});
-                    location.reload();
-                };
-                document.getElementById('overlay').style.display = 'block';
-                document.getElementById('modalConfirmacion').style.display = 'block';
-            }
-
-            function abrirConfirmarBorradoFile(n, t) {
-                if(isGenerating) return;
-                const lang = sessionStorage.getItem('idioma') || 'Español';
-                document.getElementById('txtConfirmTitle').innerText = textos[lang].deleteConfirm;
-                callbackConfirmacion = async () => {
-                    await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) });
-                    cargarArchivos();
-                    closeAll();
-                };
-                document.getElementById('overlay').style.display = 'block';
-                document.getElementById('modalConfirmacion').style.display = 'block';
-            }
-
-            function ejecutarAccionConfirmada() {
-                if(typeof callbackConfirmacion === 'function') {
-                    callbackConfirmacion();
+            function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
+            function borrarActual() { 
+                if(!isGenerating && confirm("¿Quieres borrar todo el chat actual?")) {
+                    fetch('/clear', {method:'POST'}).then(() => location.reload());
                 }
             }
-
             async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
+            async function borrarFile(n, t) { if(confirm("¿Eliminar archivo?")) { await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); cargarArchivos(); } }
             async function confirmarGuardadoManual() {
                 const n = document.getElementById('nombreArchivo').value;
                 if(!n) return;
