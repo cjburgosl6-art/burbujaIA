@@ -5,220 +5,269 @@ const path = require("path");
 const { encode } = require("gpt-3-encoder");
 
 const app = express();
-app.use(express.json()); 
+app.use(express.json());
 
 const PORT = 3000;
 const MEMORY_FILE = path.join(__dirname, "memory.json");
 const SAVES_DIR = path.join(__dirname, "conversations");
 const AUTO_DIR = path.join(__dirname, "autosaves");
 
-[SAVES_DIR, AUTO_DIR].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir); });
+[SAVES_DIR, AUTO_DIR].forEach(dir => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+});
 
-let historial = fs.existsSync(MEMORY_FILE) ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8")) : [];
+let historial = fs.existsSync(MEMORY_FILE)
+  ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8"))
+  : [];
 
-// Unificamos un prompt estricto contra alucinaciones de diálogos falsos
-let systemPrompt = "Eres un asistente de IA útil, conciso y preciso. Responde siempre en Español. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.";
+let systemPrompt =
+  "Eres un asistente de IA útil, conciso y preciso. Responde siempre en Español. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.";
 
 function calcularTokensTotalesHistorial() {
-    if (historial.length === 0) return 0;
-    const textoCompleto = historial.join("\n");
-    return encode(textoCompleto).length;
+  if (historial.length === 0) return 0;
+  const textoCompleto = historial.join("\n");
+  return encode(textoCompleto).length;
 }
 
 /* --- API --- */
 app.post("/", async (req, res) => {
-    const { mensaje, isSystem, newSystemPrompt, accion, indexEdicion } = req.body;
-    
-    if (newSystemPrompt) {
-        systemPrompt = newSystemPrompt;
+  const { mensaje, isSystem, newSystemPrompt, accion, indexEdicion } = req.body;
+
+  if (newSystemPrompt) {
+    systemPrompt = newSystemPrompt;
+  }
+
+  if (isSystem) {
+    const idiomaExtraido = mensaje.replace("Responde siempre en ", "");
+    systemPrompt = `Eres un asistente de IA útil, conciso y preciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.`;
+    return res.json({ ok: true });
+  }
+
+  let mensajeFinal = mensaje;
+
+  if (accion === "regenerar") {
+    if (
+      historial.length > 0 &&
+      historial[historial.length - 1].startsWith("Asistente:")
+    ) {
+      historial.pop();
     }
+  } else if (accion === "editar") {
+    let contadorMensajesVisibles = 0;
+    let indiceRealHistorial = -1;
 
-    if (isSystem) {
-        const idiomaExtraido = mensaje.replace("Responde siempre en ", "");
-        systemPrompt = `Eres un asistente de IA útil, conciso y preciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.`;
-        return res.json({ ok: true });
-    }
-
-    let mensajeFinal = mensaje;
-
-    if (accion === 'regenerar') {
-        if (historial.length > 0 && historial[historial.length - 1].startsWith("Asistente:")) {
-            historial.pop(); 
+    for (let i = 0; i < historial.length; i++) {
+      if (!historial[i].startsWith("Sistema:")) {
+        if (contadorMensajesVisibles === parseInt(indexEdicion)) {
+          indiceRealHistorial = i;
+          break;
         }
-    } else if (accion === 'editar') {
-        let contadorMensajesVisibles = 0;
-        let indiceRealHistorial = -1;
-
-        for (let i = 0; i < historial.length; i++) {
-            if (!historial[i].startsWith('Sistema:')) {
-                if (contadorMensajesVisibles === parseInt(indexEdicion)) {
-                    indiceRealHistorial = i;
-                    break;
-                }
-                contadorMensajesVisibles++;
-            }
-        }
-
-        if (indiceRealHistorial !== -1 && historial[indiceRealHistorial].startsWith("Usuario:")) {
-            historial = historial.slice(0, indiceRealHistorial);
-            historial.push("Usuario: " + mensajeFinal);
-        }
-    } else {
-        if (accion === 'resumir') mensajeFinal = "Haz un resumen muy breve de nuestra conversación hasta ahora.";
-        if (accion === 'corregir') mensajeFinal = "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
-        
-        historial.push("Usuario: " + mensajeFinal);
+        contadorMensajesVisibles++;
+      }
     }
-    
-    const ahora = new Date();
-    const fechaTxt = ahora.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    const horaTxt = ahora.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-    const instruccionesConFecha = `${systemPrompt}\n[Información del sistema: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. Usa estos datos únicamente si el usuario te pregunta por el tiempo]`;
 
-    const textoCompletoHistorial = instruccionesConFecha + "\n\n" + historial.join("\n") + "\nAsistente:";
-    const tokensTotalesAntes = encode(textoCompletoHistorial).length;
-
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('X-Tokens-Total-Antes', tokensTotalesAntes);
-
-    try {
-        const response = await axios({
-            method: 'post',
-            url: "http://localhost:11434/api/generate",
-            data: {
-                model: "llama3",
-                prompt: textoCompletoHistorial,
-                stream: true
-            },
-            responseType: 'stream'
-        });
-
-        let respuestaCompleta = "";
-        
-        req.on('close', () => {
-            if (response.data && typeof response.data.destroy === 'function') {
-                response.data.destroy(); 
-            }
-        });
-
-        response.data.on('data', (chunk) => {
-            const lines = chunk.toString().split('\n');
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const json = JSON.parse(line);
-                    if (json.response) {
-                        let fragmentoLimpio = json.response
-                            .replace(/\{\d+\}/g, '')
-                            .replace(/\{\s*'\s*\}\}/g, '')
-                            .replace(/\{\s*"\s*\}\}/g, '');
-                        
-                        respuestaCompleta += fragmentoLimpio;
-                        res.write(fragmentoLimpio); 
-                    }
-                } catch (err) { /* Ignorar fragmentos corruptos */ }
-            }
-        });
-
-        response.data.on('end', () => {
-            if (respuestaCompleta.trim()) {
-                historial.push("Asistente: " + respuestaCompleta.trim());
-                fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
-            }
-            
-            const año = ahora.getFullYear();
-            const mes = String(ahora.getMonth() + 1).padStart(2, '0');
-            const dia = String(ahora.getDate()).padStart(2, '0');
-            const horas = String(ahora.getHours()).padStart(2, '0');
-            const minutos = String(ahora.getMinutes()).padStart(2, '0');
-            const segundos = String(ahora.getSeconds()).padStart(2, '0');
-            
-            const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.json`;
-            fs.writeFileSync(path.join(AUTO_DIR, nombreArchivoCronologico), JSON.stringify(historial, null, 2));
-
-            const archivosAuto = fs.readdirSync(AUTO_DIR)
-                .filter(f => f.endsWith('.json'))
-                .map(f => ({
-                    name: f,
-                    ruta: path.join(AUTO_DIR, f),
-                    mtime: fs.statSync(path.join(AUTO_DIR, f)).mtime
-                }));
-
-            archivosAuto.sort((a, b) => a.mtime - b.mtime);
-
-            const LIMITE_AUTOSAVES = 30;
-            if (archivosAuto.length > LIMITE_AUTOSAVES) {
-                const cuantosBorrar = archivosAuto.length - LIMITE_AUTOSAVES;
-                for (let i = 0; i < cuantosBorrar; i++) {
-                    fs.unlinkSync(archivosAuto[i].ruta);
-                }
-            }
-            res.end();
-        });
-
-    } catch (e) {
-        res.status(500).write("Error al conectar con Ollama.");
-        res.end();
+    if (
+      indiceRealHistorial !== -1 &&
+      historial[indiceRealHistorial].startsWith("Usuario:")
+    ) {
+      historial = historial.slice(0, indiceRealHistorial);
+      historial.push("Usuario: " + mensajeFinal);
     }
+  } else {
+    if (accion === "resumir")
+      mensajeFinal = "Haz un resumen muy breve de nuestra conversación hasta ahora.";
+    if (accion === "corregir")
+      mensajeFinal = "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
+
+    historial.push("Usuario: " + mensajeFinal);
+  }
+
+  const ahora = new Date();
+  const fechaTxt = ahora.toLocaleDateString("es-ES", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const horaTxt = ahora.toLocaleTimeString("es-ES", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const instruccionesConFecha = `${systemPrompt}\n[Información del sistema: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. Usa estos datos únicamente si el usuario te pregunta por el tiempo]`;
+
+  const textoCompletoHistorial =
+    instruccionesConFecha + "\n\n" + historial.join("\n") + "\nAsistente:";
+  const tokensTotalesAntes = encode(textoCompletoHistorial).length;
+
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.setHeader("X-Tokens-Total-Antes", tokensTotalesAntes);
+
+  try {
+    const response = await axios({
+      method: "post",
+      url: "http://localhost:11434/api/generate",
+      data: {
+        model: "llama3",
+        prompt: textoCompletoHistorial,
+        stream: true,
+      },
+      responseType: "stream",
+    });
+
+    let respuestaCompleta = "";
+
+    req.on("close", () => {
+      if (response.data && typeof response.data.destroy === "function") {
+        response.data.destroy();
+      }
+    });
+
+    response.data.on("data", (chunk) => {
+      const lines = chunk.toString().split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const json = JSON.parse(line);
+          if (json.response) {
+            let fragmentoLimpio = json.response
+              .replace(/\{\d+\}/g, "")
+              .replace(/\{\s*'\s*\}\}/g, "")
+              .replace(/\{\s*"\s*\}\}/g, "");
+
+            respuestaCompleta += fragmentoLimpio;
+            res.write(fragmentoLimpio);
+          }
+        } catch (err) { /* Ignorar fragmentos corruptos */ }
+      }
+    });
+
+    response.data.on("end", () => {
+      if (respuestaCompleta.trim()) {
+        historial.push("Asistente: " + respuestaCompleta.trim());
+        fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+      }
+
+      const año = ahora.getFullYear();
+      const mes = String(ahora.getMonth() + 1).padStart(2, "0");
+      const dia = String(ahora.getDate()).padStart(2, "0");
+      const horas = String(ahora.getHours()).padStart(2, "0");
+      const minutos = String(ahora.getMinutes()).padStart(2, "0");
+      const segundos = String(ahora.getSeconds()).padStart(2, "0");
+
+      const nombreArchivoCronologico = `auto_${año}-${mes}-${dia}_${horas}-${minutos}-${segundos}.json`;
+      fs.writeFileSync(
+        path.join(AUTO_DIR, nombreArchivoCronologico),
+        JSON.stringify(historial, null, 2)
+      );
+
+      const archivosAuto = fs
+        .readdirSync(AUTO_DIR)
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => ({
+          name: f,
+          ruta: path.join(AUTO_DIR, f),
+          mtime: fs.statSync(path.join(AUTO_DIR, f)).mtime,
+        }));
+
+      archivosAuto.sort((a, b) => a.mtime - b.mtime);
+
+      const LIMITE_AUTOSAVES = 30;
+      if (archivosAuto.length > LIMITE_AUTOSAVES) {
+        const cuantosBorrar = archivosAuto.length - LIMITE_AUTOSAVES;
+        for (let i = 0; i < cuantosBorrar; i++) {
+          fs.unlinkSync(archivosAuto[i].ruta);
+        }
+      }
+      res.end();
+    });
+  } catch (e) {
+    res.status(500).write("Error al conectar con Ollama.");
+    res.end();
+  }
 });
 
-app.get("/current-tokens", (req, res) => { res.json({ totalAcumulado: calcularTokensTotalesHistorial() }); });
-app.get("/get-historial", (req, res) => { res.json(historial); });
+app.get("/current-tokens", (req, res) => {
+  res.json({ totalAcumulado: calcularTokensTotalesHistorial() });
+});
+app.get("/get-historial", (req, res) => {
+  res.json(historial);
+});
 
 app.get("/files", (req, res) => {
-    const manual = fs.readdirSync(SAVES_DIR)
-        .filter(f => f.endsWith('.json') || f.endsWith('.md'))
-        .map(f => ({ name: f, type: 'manual' }));
-    const auto = fs.readdirSync(AUTO_DIR)
-        .filter(f => f.endsWith('.json'))
-        .map(f => ({ name: f, type: 'auto' }));
-    res.json([...manual, ...auto]);
+  const manual = fs
+    .readdirSync(SAVES_DIR)
+    .filter((f) => f.endsWith(".json") || f.endsWith(".md"))
+    .map((f) => ({ name: f, type: "manual" }));
+  const auto = fs
+    .readdirSync(AUTO_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => ({ name: f, type: "auto" }));
+  res.json([...manual, ...auto]);
 });
 
 app.post("/save-manual", (req, res) => {
-    const { nombre, formato } = req.body;
-    const ext = formato === 'md' ? '.md' : '.json';
-    const safeName = nombre.replace(/[^a-z0-9]/gi, '_') + ext;
-    
-    if (formato === 'md') {
-        fs.writeFileSync(path.join(SAVES_DIR, safeName), historial.join("\n\n"));
-    } else {
-        fs.writeFileSync(path.join(SAVES_DIR, safeName), JSON.stringify(historial, null, 2));
-    }
-    res.sendStatus(200);
+  const { nombre, formato } = req.body;
+  const ext = formato === "md" ? ".md" : ".json";
+  const safeName = nombre.replace(/[^a-z0-9]/gi, "_") + ext;
+
+  if (formato === "md") {
+    fs.writeFileSync(path.join(SAVES_DIR, safeName), historial.join("\n\n"));
+  } else {
+    fs.writeFileSync(
+      path.join(SAVES_DIR, safeName),
+      JSON.stringify(historial, null, 2)
+    );
+  }
+  res.sendStatus(200);
 });
 
 app.post("/load", (req, res) => {
-    const { name, type } = req.body;
-    const dir = type === 'auto' ? AUTO_DIR : SAVES_DIR;
-    const contenido = fs.readFileSync(path.join(dir, name), "utf-8");
-    
-    if (name.endsWith('.md')) {
-        historial = contenido.split("\n\n").filter(linea => linea.trim() !== "");
-    } else {
-        historial = JSON.parse(contenido);
-    }
-    fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
-    res.sendStatus(200);
+  const { name, type } = req.body;
+  const dir = type === "auto" ? AUTO_DIR : SAVES_DIR;
+  const contenido = fs.readFileSync(path.join(dir, name), "utf-8");
+
+  if (name.endsWith(".md")) {
+    historial = contenido.split("\n\n").filter((linea) => linea.trim() !== "");
+  } else {
+    historial = JSON.parse(contenido);
+  }
+  fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+  res.sendStatus(200);
 });
 
 app.post("/delete", (req, res) => {
-    const { name, type } = req.body;
-    const dir = type === 'auto' ? AUTO_DIR : SAVES_DIR;
-    fs.unlinkSync(path.join(dir, name));
-    res.sendStatus(200);
+  const { name, type } = req.body;
+  const dir = type === "auto" ? AUTO_DIR : SAVES_DIR;
+  fs.unlinkSync(path.join(dir, name));
+  res.sendStatus(200);
 });
 
 app.post("/clear", (req, res) => {
-    historial = [];
-    if (fs.existsSync(MEMORY_FILE)) fs.unlinkSync(MEMORY_FILE);
-    res.sendStatus(200);
+  historial = [];
+  if (fs.existsSync(MEMORY_FILE)) fs.unlinkSync(MEMORY_FILE);
+  res.sendStatus(200);
+});
+
+app.get("/export", (req, res) => {
+  const formato = req.query.formato || "json";
+  const nombre = req.query.nombre || "conversacion";
+  const safeName = nombre.replace(/[^a-z0-9]/gi, "_");
+
+  if (formato === "md") {
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${safeName}.md`);
+    res.send(historial.join("\n\n"));
+  } else {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=${safeName}.json`);
+    res.send(JSON.stringify(historial, null, 2));
+  }
 });
 
 /* --- FRONTEND INTEGRADO --- */
 app.get("/", (req, res) => {
-    res.send(`
+  res.send(`
     <!DOCTYPE html>
     <html>
     <head>
@@ -318,7 +367,7 @@ app.get("/", (req, res) => {
                     <button class="info-btn" onclick="abrirInfoTokens()">ⓘ</button>
                 </div>
                 <button onclick="toggleTheme()" id="themeBtn">🌙</button>
-                <button onclick="abrirGuardarManual()">💾</button>
+                <button onclick="abrirMenuGuardar()">💾</button>
                 <button onclick="borrarActual()" style="background:#333">🗑</button>
             </div>
             <div id="chat"></div>
@@ -332,56 +381,97 @@ app.get("/", (req, res) => {
                 <button id="btnEnviar" onclick="manejadorBotonPrincipal()"></button>
             </div>
         </div>
+
         <div id="modalIdioma" class="modal">
             <h2 style="color:var(--primary)">Language / Idioma</h2>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Español')">🇪🇸 Español</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Inglés')">🇺🇸 English</button>
             <button style="width:100%; margin: 5px 0;" onclick="setLang('Francés')">🇫🇷 Français</button>
         </div>
+
+        <div id="modalGuardarOpciones" class="modal">
+            <h3 id="txtOpcionesTitle" style="color:var(--primary)">¿Qué quieres hacer?</h3>
+            <button id="btnOpGuardarServidor" style="width:100%; margin:5px 0;" onclick="irGuardar()">💾 Guardar en Servidor</button>
+            <button id="btnOpExportarPC" style="width:100%; margin:5px 0; background:#2a9d8f;" onclick="irExportar()">📥 Exportar al Ordenador</button>
+            <button id="btnOpCancelar" style="width:100%; margin-top:10px; background:#444; color:white;" onclick="closeAll()">Cancelar</button>
+        </div>
+
         <div id="modalGuardar" class="modal">
             <h3 id="txtSaveTitle">Guardar</h3>
             <input id="nombreArchivo" style="width:100%; margin-bottom:15px; box-sizing:border-box;">
             <div style="margin-bottom: 15px; text-align: left;">
-                <label style="font-size: 11px; opacity: 0.8;">Formato:</label>
+                <label id="lblFormato" style="font-size: 11px; opacity: 0.8;">Formato:</label>
                 <select id="formatoArchivo" style="width: 100%; padding: 8px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; margin-top: 5px; font-size: 12px;">
                     <option value="json">JSON (.json)</option>
                     <option value="md">Markdown (.md)</option>
                 </select>
             </div>
-            <button id="btnConfirmSave" onclick="confirmarGuardadoManual()" style="width:100%"></button>
+            <button id="btnConfirmSave" onclick="procesarGuardadoOExportado()" style="width:100%"></button>
             <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
         </div>
+
         <div id="modalInfo" class="modal">
             <h3 id="txtInfoTitle" style="color:var(--primary); margin-top: 0;"></h3>
             <div id="txtInfoBody" style="font-size: 13px; text-align: left; line-height: 1.6; margin-bottom: 20px;"></div>
             <button onclick="closeAll()" style="width:100%">Ok</button>
         </div>
+
         <script>
             let rawHistorial = [];
-            let isGenerating = false; 
-            let abortController = null; 
+            let isGenerating = false;
+            let abortController = null;
             let pestañaActiva = 'manual';
-            let usuarioHizoScrollArriba = false; 
-            
-            const renderer = new marked.Renderer();
-            renderer.code = function(tokenOrCode, lang) {
-                let code = (tokenOrCode && typeof tokenOrCode === 'object') ? tokenOrCode.text : tokenOrCode;
-                let lenguaje = (tokenOrCode && typeof tokenOrCode === 'object') ? (tokenOrCode.lang || lang) : lang;
-                if (!code) code = "";
+            let usuarioHizoScrollArriba = false;
+            let modoActualModal = 'guardar';
+
+            marked.use({
+                breaks: true,
+                gfm: true
+            });
+
+            function postProcesarBloquesCodigo(htmlInput) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = htmlInput;
                 
-                // FIXED: Solucionado el problema donde todo salía como Javascript por defecto
-                if (!lenguaje || lenguaje === 'plaintext') lenguaje = 'plaintext';
-                let validLang = hljs.getLanguage(lenguaje) ? lenguaje : 'plaintext';
-                
-                let highlighted = "";
-                try { highlighted = hljs.highlight(code, { language: validLang }).value; } catch(e) { highlighted = code; }
-                let escapedCode = "";
-                try { escapedCode = btoa(unescape(encodeURIComponent(code))); } catch(e) { escapedCode = ""; }
                 const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
                 const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
-                return '<div class="code-block-wrapper"><div class="code-block-header"><span>' + validLang.toUpperCase() + '</span><button class="btn-copiar-codigo" onclick="copiarBloqueCodigo(this, \\'' + escapedCode + '\\')">' + textoBotonCc + '</button></div><pre><code class="hljs lang-' + validLang + '">' + highlighted + '</code></pre></div>';
-            };
-            marked.use({ renderer, breaks: true });
+
+                const pres = tempDiv.querySelectorAll('pre');
+                pres.forEach(pre => {
+                    const codeEl = pre.querySelector('code');
+                    if (codeEl) {
+                        let clases = codeEl.className.split(' ');
+                        let lenguaje = 'plaintext';
+                        clases.forEach(c => {
+                            if (c.startsWith('language-')) {
+                                lenguaje = c.replace('language-', '');
+                            }
+                        });
+
+                        const textoCodigo = codeEl.innerText;
+                        let escapedCode = "";
+                        try { escapedCode = btoa(unescape(encodeURIComponent(textoCodigo))); } catch(e) { escapedCode = ""; }
+
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'code-block-wrapper';
+                        
+                        const header = document.createElement('div');
+                        header.className = 'code-block-header';
+                        header.innerHTML = '<span>' + lenguaje.toUpperCase() + '</span><button class="btn-copiar-codigo">' + textoBotonCc + '</button>';
+                        
+                        header.querySelector('.btn-copiar-codigo').onclick = function() {
+                            copiarBloqueCodigo(this, escapedCode);
+                        };
+
+                        pre.parentNode.insertBefore(wrapper, pre);
+                        wrapper.appendChild(header);
+                        wrapper.appendChild(pre);
+                        
+                        try { hljs.highlightElement(codeEl); } catch(e) {}
+                    }
+                });
+                return tempDiv.innerHTML;
+            }
 
             document.getElementById('chat').addEventListener('scroll', () => {
                 const chatDiv = document.getElementById('chat');
@@ -411,31 +501,34 @@ app.get("/", (req, res) => {
 
             const textos = {
                 'Español': { 
-                    send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo', 
-                    historial: 'HISTORIAL', saveTitle: 'Guardar conversación', savePlaceholder: 'Nombre del archivo', 
-                    confirmSave: 'Guardar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?', 
-                    copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens', 
-                    copyCode: 'Copiar Código',
-                    infoBody: '🔥 <b>Tokens Consumidos:</b> Es el total de tokens acumulados en la sesión actual.<br><br>🧠 <b>Límite de Contexto (8192):</b> Es la memoria máxima que el modelo Llama3 puede recordar de forma simultánea.', 
-                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar' 
+                    send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo',
+                    historial: 'HISTORIAL', saveTitle: 'Guardar conversación', exportTitle: 'Exportar al ordenador', savePlaceholder: 'Nombre del archivo',
+                    confirmSave: 'Guardar ahora', confirmExport: 'Exportar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?',
+                    copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens',
+                    copyCode: 'Copiar Código', labelFormato: 'Formato:',
+                    opcionesTitle: '¿Qué quieres hacer?', opServidor: '💾 Guardar en Servidor', opExportar: '📥 Exportar al Ordenador',
+                    infoBody: '🔥 <b>Tokens Consumidos:</b> Es el total de tokens acumulados en la sesión actual.<br><br>🧠 <b>Límite de Contexto (8192):</b> Es la memoria máxima que el modelo Llama3 puede recordar de forma simultánea.',
+                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar'
                 },
                 'Inglés': { 
-                    send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing', 
-                    historial: 'HISTORY', saveTitle: 'Save conversation', savePlaceholder: 'File name', 
-                    confirmSave: 'Save now', cancel: 'Cancel', deleteConfirm: 'Delete file?', 
-                    copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter', 
-                    copyCode: 'Copy Code',
-                    infoBody: '🔥 <b>Tokens Used:</b> Total tokens used in the current session.<br><br>🧠 <b>Context Limit (8192):</b> Maximum memory capacity that Llama3 model can handle at once.', 
-                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate' 
+                    send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing',
+                    historial: 'HISTORY', saveTitle: 'Save conversation', exportTitle: 'Export to computer', savePlaceholder: 'File name',
+                    confirmSave: 'Save now', confirmExport: 'Export now', cancel: 'Cancel', deleteConfirm: 'Delete file?',
+                    copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter',
+                    copyCode: 'Copy Code', labelFormato: 'Format:',
+                    opcionesTitle: 'What do you want to do?', opServidor: '💾 Save to Server', opExportar: '📥 Export to Computer',
+                    infoBody: '🔥 <b>Tokens Used:</b> Total tokens used in the current session.<br><br>🧠 <b>Context Limit (8192):</b> Maximum memory capacity that Llama3 model can handle at once.',
+                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate'
                 },
                 'Francés': { 
-                    send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit', 
-                    historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', savePlaceholder: 'Nom', 
-                    confirmSave: 'Enregistrer', cancel: 'Annuler', deleteConfirm: 'Supprimer?', 
-                    copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens', 
-                    copyCode: 'Copier le Code',
-                    infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 peut traiter.', 
-                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Régénérer', btnRegenerar: '🔄 Régénérer' 
+                    send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit',
+                    historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', exportTitle: 'Exporter sur l ordinateur', savePlaceholder: 'Nom',
+                    confirmSave: 'Enregistrer', confirmExport: 'Exporter', cancel: 'Annuler', deleteConfirm: 'Supprimer?',
+                    copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens',
+                    copyCode: 'Copier le Code', labelFormato: 'Format:',
+                    opcionesTitle: 'Que voulez-vous faire?', opServidor: '💾 Sauvegarder sur le Serveur', opExportar: '📥 Exporter sur l Ordinateur',
+                    infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 peut traiter.',
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer'
                 }
             };
 
@@ -454,14 +547,34 @@ app.get("/", (req, res) => {
                 document.getElementById('btnEnviar').innerText = isGenerating ? t.stop : t.send;
                 document.getElementById('input').placeholder = t.placeholder;
                 document.getElementById('txtHistorialTitle').innerText = t.historial;
-                document.getElementById('txtSaveTitle').innerText = t.saveTitle;
                 document.getElementById('nombreArchivo').placeholder = t.savePlaceholder;
-                document.getElementById('btnConfirmSave').innerText = t.confirmSave;
                 document.getElementById('btnCancelSave').innerText = t.cancel;
                 document.getElementById('txtInfoTitle').innerText = t.infoTitle;
                 document.getElementById('btnActionResumir').innerText = t.btnResumir;
                 document.getElementById('btnActionCorregir').innerText = t.btnCorregir;
                 document.getElementById('btnActionRegenerar').innerText = t.btnRegenerar;
+                document.getElementById('lblFormato').innerText = t.labelFormato;
+
+                // ✅ NUEVO: Traducir dinámicamente el modal de opciones iniciales de guardado
+                document.getElementById('txtOpcionesTitle').innerText = t.opcionesTitle;
+                document.getElementById('btnOpGuardarServidor').innerText = t.opServidor;
+                document.getElementById('btnOpExportarPC').innerText = t.opExportar;
+                document.getElementById('btnOpCancelar').innerText = t.cancel;
+
+                if (modoActualModal === 'exportar') {
+                    document.getElementById('txtSaveTitle').innerText = t.exportTitle;
+                    document.getElementById('btnConfirmSave').innerText = t.confirmExport;
+                } else {
+                    document.getElementById('txtSaveTitle').innerText = t.saveTitle;
+                    document.getElementById('btnConfirmSave').innerText = t.confirmSave;
+                }
+
+                document.querySelectorAll('.btn-copiar').forEach(btn => {
+                    btn.innerText = t.copy;
+                });
+                document.querySelectorAll('.btn-copiar-codigo').forEach(btn => {
+                    btn.innerText = t.copyCode;
+                });
             }
 
             function manejadorBotonPrincipal() { if(isGenerating) { cancelarRespuesta(); } else { enviar(); } }
@@ -470,25 +583,25 @@ app.get("/", (req, res) => {
             function cambiarEstadoControles(generando) {
                 isGenerating = generando;
                 if (!generando) usuarioHizoScrollArriba = false;
-                
+
                 const input = document.getElementById('input');
                 const btn = document.getElementById('btnEnviar');
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 document.getElementById('btnActionResumir').disabled = generando;
                 document.getElementById('btnActionCorregir').disabled = generando;
-                
+
                 const tieneRespuestas = rawHistorial.some(m => m.startsWith("Asistente:"));
                 document.getElementById('btnActionRegenerar').disabled = generando || !tieneRespuestas;
 
-                if(generando) { input.disabled = true; btn.innerText = textos[lang].stop; btn.classList.add('btn-stop'); } 
+                if(generando) { input.disabled = true; btn.innerText = textos[lang].stop; btn.classList.add('btn-stop'); }
                 else { input.disabled = false; btn.innerText = textos[lang].send; btn.classList.remove('btn-stop'); input.focus(); }
             }
 
-            function abrirInfoTokens() { 
+            function abrirInfoTokens() {
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 document.getElementById('txtInfoBody').innerHTML = textos[lang].infoBody;
-                document.getElementById('overlay').style.display = 'block'; 
-                document.getElementById('modalInfo').style.display = 'block'; 
+                document.getElementById('overlay').style.display = 'block';
+                document.getElementById('modalInfo').style.display = 'block';
             }
 
             function copiarTextoElemento(btn, textoRaw) {
@@ -507,19 +620,35 @@ app.get("/", (req, res) => {
                 let textoOriginal = rawMsg.split(': ').slice(1).join(': ');
 
                 const contenedorOriginal = msgBox.innerHTML;
-                msgBox.innerHTML = \`
-                    <div class="edit-textarea-box">
-                        <textarea class="edit-textarea">\` + textoOriginal.replace(/\`/g, '\\\`').replace(/\\\\\$/g, '\\\\$') + \`</textarea>
-                        <div class="edit-actions">
-                            <button class="edit-btn-cancel">Cancelar</button>
-                            <button class="edit-btn-ok">Guardar y Enviar</button>
-                        </div>
-                    </div>
-                \`;
+                msgBox.innerHTML = '';
 
-                msgBox.querySelector('.edit-btn-cancel').onclick = () => { msgBox.innerHTML = contenedorOriginal; };
-                msgBox.querySelector('.edit-btn-ok').onclick = () => {
-                    const nuevoTexto = msgBox.querySelector('.edit-textarea').value;
+                const editBox = document.createElement('div');
+                editBox.className = 'edit-textarea-box';
+
+                const textarea = document.createElement('textarea');
+                textarea.className = 'edit-textarea';
+                textarea.value = textoOriginal;
+                editBox.appendChild(textarea);
+
+                const editActions = document.createElement('div');
+                editActions.className = 'edit-actions';
+
+                const btnCancel = document.createElement('button');
+                btnCancel.className = 'edit-btn-cancel';
+                btnCancel.textContent = 'Cancelar';
+                editActions.appendChild(btnCancel);
+
+                const btnOk = document.createElement('button');
+                btnOk.className = 'edit-btn-ok';
+                btnOk.textContent = 'Guardar y Enviar';
+                editActions.appendChild(btnOk);
+
+                editBox.appendChild(editActions);
+                msgBox.appendChild(editBox);
+
+                btnCancel.onclick = () => { msgBox.innerHTML = contenedorOriginal; };
+                btnOk.onclick = () => {
+                    const nuevoTexto = textarea.value;
                     if (!nuevoTexto.trim()) return;
                     enviar(null, 'editar', index, nuevoTexto);
                 };
@@ -529,7 +658,7 @@ app.get("/", (req, res) => {
                 const chatDiv = document.getElementById('chat');
                 const lang = sessionStorage.getItem('idioma') || 'Español';
                 chatDiv.innerHTML = "";
-                
+
                 let mensajesVisibles = rawHistorial.filter(m => !m.startsWith('Sistema:'));
 
                 mensajesVisibles.map((m, index) => {
@@ -544,14 +673,15 @@ app.get("/", (req, res) => {
                     return content.trim() ? { isUser, content, index } : null;
                 }).filter(i => i !== null).forEach(item => {
                     if (item.content === '{"ok":true}') return;
-                    
+
                     const msgBox = document.createElement('div');
                     msgBox.className = item.isUser ? 'msg user' : 'msg';
-                    
+
                     const contentDiv = document.createElement('div');
-                    contentDiv.innerHTML = marked.parse(item.content);
+                    let htmlRendered = marked.parse(item.content);
+                    contentDiv.innerHTML = postProcesarBloquesCodigo(htmlRendered);
                     msgBox.appendChild(contentDiv);
-                    
+
                     if(item.isUser) {
                         const btnEditar = document.createElement('button');
                         btnEditar.className = 'btn-editar-msg';
@@ -569,6 +699,7 @@ app.get("/", (req, res) => {
                     chatDiv.appendChild(msgBox);
                 });
                 gestionarScrollChat();
+                aplicarTraducciones();
             }
 
             async function actualizarContadorTokensDesdeServidor() {
@@ -586,10 +717,10 @@ app.get("/", (req, res) => {
                 const chatDiv = document.getElementById('chat');
                 const msg = input.value;
                 const lang = sessionStorage.getItem('idioma') || 'Español';
-                
+
                 if(!accion && !msg) return;
-                cambiarEstadoControles(true); 
-                abortController = new AbortController(); 
+                cambiarEstadoControles(true);
+                abortController = new AbortController();
 
                 if (accion === 'regenerar') {
                     if (rawHistorial.length > 0 && rawHistorial[rawHistorial.length - 1].startsWith("Asistente:")) {
@@ -612,13 +743,13 @@ app.get("/", (req, res) => {
                         rawHistorial = rawHistorial.slice(0, indiceRealHistorial);
                         rawHistorial.push("Usuario: " + textoEditado);
                     }
-                } else if(!accion) { 
-                    rawHistorial.push("Usuario: " + msg); 
-                    input.value = ""; 
-                } else { 
-                    rawHistorial.push("Usuario: " + (accion === 'resumir' ? '📝 Resumir...' : '🛠 Corregir...')); 
+                } else if(!accion) {
+                    rawHistorial.push("Usuario: " + msg);
+                    input.value = "";
+                } else {
+                    rawHistorial.push("Usuario: " + (accion === 'resumir' ? '📝 Resumir...' : '🛠 Corregir...'));
                 }
-                
+
                 renderChat();
 
                 const msgDiv = document.createElement('div');
@@ -632,11 +763,10 @@ app.get("/", (req, res) => {
                     const response = await fetch('/', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ 
-                            mensaje: accion === 'editar' ? textoEditado : msg, 
-                            accion: accion, 
+                        body: JSON.stringify({
+                            mensaje: accion === 'editar' ? textoEditado : msg,
+                            accion: accion,
                             indexEdicion: indexEdicion,
-                            // FIXED: Reforzadas las instrucciones aquí para que no hable nunca imitando al usuario
                             newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente fluidamente. Está TERMINANTEMENTE PROHIBIDO imitar al usuario o inventar líneas que simulen ser parte del chat histórico como 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código o scripts, usa siempre bloques de código Markdown con su respectivo lenguaje."
                         }),
                         signal: abortController.signal
@@ -651,8 +781,10 @@ app.get("/", (req, res) => {
                         chunkTxt = chunkTxt.replace(/\{\d+\}/g, '').replace(/\{\s*'\s*\}\}/g, '').replace(/\{\s*"\s*\}\}/g, '');
                         assistantMsg += chunkTxt;
                         if(primerChunk) { msgDiv.innerHTML = ""; primerChunk = false; }
-                        msgDiv.innerHTML = marked.parse(assistantMsg);
-                        gestionarScrollChat(); 
+                        
+                        let htmlRendered = marked.parse(assistantMsg);
+                        msgDiv.innerHTML = postProcesarBloquesCodigo(htmlRendered);
+                        gestionarScrollChat();
                     }
                     if (assistantMsg.trim()) {
                         rawHistorial.push("Asistente: " + assistantMsg.trim());
@@ -678,16 +810,15 @@ app.get("/", (req, res) => {
                 const res = await fetch('/files');
                 const allFiles = await res.json();
                 const list = document.getElementById('fileList');
-                list.innerHTML = ""; 
+                list.innerHTML = "";
                 const archivosFiltrados = allFiles.filter(f => f.type === pestañaActiva);
                 archivosFiltrados.reverse().forEach(archivo => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
                     const tagClass = archivo.type === 'manual' ? 'tag tag-manual' : 'tag';
-                    
-                    // FIXED: Solucionado el problema del recorte de los nombres. Ahora saltan de línea limpiamente.
+
                     item.innerHTML = '<span class="' + tagClass + '">' + archivo.type + '</span><span class="file-link-name" style="flex:1; cursor:pointer; word-break: break-all; white-space: normal;"></span><span class="btn-delete-file" style="cursor:pointer; padding-left:10px;">🗑</span>';
-                    
+
                     const linkSpan = item.querySelector('.file-link-name');
                     linkSpan.innerText = archivo.name;
                     linkSpan.onclick = () => !isGenerating && cargarFile(archivo.name, archivo.type);
@@ -700,31 +831,87 @@ app.get("/", (req, res) => {
                 sessionStorage.setItem('idioma', lang);
                 fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) }).then(() => location.reload());
             }
-            function toggleMenu() { document.getElementById('sidebar').classList.toggle('open'); if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos(); }
-            function abrirGuardarManual() { if(!isGenerating) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalGuardar').style.display = 'block'; } }
-            function closeAll() { document.getElementById('overlay').style.display = 'none'; document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); }
-            
-            function borrarActual() { 
+
+            function toggleMenu() {
+                document.getElementById('sidebar').classList.toggle('open');
+                if(document.getElementById('sidebar').classList.contains('open')) cargarArchivos();
+            }
+
+            function abrirMenuGuardar() {
+                if (isGenerating) return;
+                aplicarTraducciones(); // Se asegura de que se apliquen las traducciones correspondientes antes de abrir
+                document.getElementById('overlay').style.display = 'block';
+                document.getElementById('modalGuardarOpciones').style.display = 'block';
+            }
+
+            function irGuardar() {
+                modoActualModal = 'guardar';
+                document.getElementById('modalGuardarOpciones').style.display = 'none';
+                document.getElementById('nombreArchivo').value = "";
+                aplicarTraducciones();
+                document.getElementById('modalGuardar').style.display = 'block';
+            }
+
+            function irExportar() {
+                modoActualModal = 'exportar';
+                document.getElementById('modalGuardarOpciones').style.display = 'none';
+                document.getElementById('nombreArchivo').value = "conversacion";
+                aplicarTraducciones();
+                document.getElementById('modalGuardar').style.display = 'block';
+            }
+
+            function procesarGuardadoOExportado() {
+                if (modoActualModal === 'exportar') {
+                    ejecutarExportacionLocal();
+                } else {
+                    confirmarGuardadoManual();
+                }
+            }
+
+            function ejecutarExportacionLocal() {
+                const nombre = document.getElementById('nombreArchivo').value.trim();
+                const formato = document.getElementById('formatoArchivo').value;
+                if (!nombre) return;
+
+                closeAll();
+
+                const linkDescarga = document.createElement('a');
+                linkDescarga.href = "/export?formato=" + formato + "&nombre=" + encodeURIComponent(nombre);
+                linkDescarga.download = nombre + "." + formato;
+                document.body.appendChild(linkDescarga);
+                linkDescarga.click();
+                document.body.removeChild(linkDescarga);
+            }
+
+            function closeAll() {
+                document.getElementById('overlay').style.display = 'none';
+                document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
+            }
+
+            function borrarActual() {
                 if(!isGenerating) {
                     fetch('/clear', {method:'POST'}).then(() => location.reload());
                 }
             }
-            async function cargarFile(n, t) { await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); location.reload(); }
-            
-            // Eliminación directa sin diálogos como pediste antes
-            async function borrarFile(n, t) { 
-                await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) }); 
-                cargarArchivos(); 
+
+            async function cargarFile(n, t) {
+                await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) });
+                location.reload();
             }
-            
+
+            async function borrarFile(n, t) {
+                await fetch('/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) });
+                cargarArchivos();
+            }
+
             async function confirmarGuardadoManual() {
-                const n = document.getElementById('nombreArchivo').value;
+                const n = document.getElementById('nombreArchivo').value.trim();
                 const f = document.getElementById('formatoArchivo').value;
                 if(!n) return;
-                await fetch('/save-manual', { 
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'}, 
-                    body: JSON.stringify({ nombre: n, formato: f }) 
+                await fetch('/save-manual', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ nombre: n, formato: f })
                 });
                 closeAll();
                 cargarArchivos();
@@ -734,13 +921,21 @@ app.get("/", (req, res) => {
                 const savedTheme = localStorage.getItem('theme');
                 if(savedTheme === 'light') document.body.classList.add('light-mode');
                 try { const res = await fetch('/get-historial'); rawHistorial = await res.json(); } catch(e) { rawHistorial = []; }
-                cambiarEstadoControles(false); actualizarContadorTokensDesdeServidor(); aplicarTraducciones(); renderChat();
-                if(!sessionStorage.getItem('idioma')) { document.getElementById('overlay').style.display = 'block'; document.getElementById('modalIdioma').style.display = 'block'; }
+                cambiarEstadoControles(false);
+                actualizarContadorTokensDesdeServidor();
+                renderChat();
+                aplicarTraducciones();
+                
+                const idioma = sessionStorage.getItem('idioma');
+                if(!idioma || idioma === "null") {
+                    document.getElementById('overlay').style.display = 'block';
+                    document.getElementById('modalIdioma').style.display = 'block';
+                }
             };
         </script>
     </body>
     </html>
-    `);
+  `);
 });
 
 app.listen(PORT, () => console.log("Use the toggle button to open the chat panel."));

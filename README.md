@@ -1,4 +1,1 @@
-Quitar las preguntas de si quiere borrar un chat permanetemente.
-no estan los saves, ni los manuales ni los automaticos
-Guardar entre md o json
-Para exportar, que ahora no funciona
+Quitar que me pregunte el tipo de archivo al guardar, pero mantenerlo en exportar
