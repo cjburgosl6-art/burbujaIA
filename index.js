@@ -5,7 +5,7 @@ const path = require("path");
 const { encode } = require("gpt-3-encoder");
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Límite amplio para importar archivos grandes
 
 const PORT = 3000;
 const MEMORY_FILE = path.join(__dirname, "memory.json");
@@ -20,8 +20,11 @@ let historial = fs.existsSync(MEMORY_FILE)
   ? JSON.parse(fs.readFileSync(MEMORY_FILE, "utf-8"))
   : [];
 
-let systemPrompt =
-  "Eres un asistente de IA útil, conciso y preciso. Responde siempre en Español. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.";
+let idiomaActualSistema = "Español";
+
+function obtenerSystemPrompt(idioma) {
+  return `Eres un asistente de IA útil, conciso y preciso. Responde siempre en ${idioma}. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente fluidamente. Está TERMINANTEMENTE PROHIBIDO imitar al usuario o introducir líneas falsas que simulen ser parte del chat histórico como 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.`;
+}
 
 function calcularTokensTotalesHistorial() {
   if (historial.length === 0) return 0;
@@ -31,16 +34,11 @@ function calcularTokensTotalesHistorial() {
 
 /* --- API --- */
 app.post("/", async (req, res) => {
-  const { mensaje, isSystem, newSystemPrompt, accion, indexEdicion } = req.body;
+  const { mensaje, isSystem, idioma, accion, indexEdicion } = req.body;
 
-  if (newSystemPrompt) {
-    systemPrompt = newSystemPrompt;
-  }
-
-  if (isSystem) {
-    const idiomaExtraido = mensaje.replace("Responde siempre en ", "");
-    systemPrompt = `Eres un asistente de IA útil, conciso y preciso. Responde siempre en ${idiomaExtraido}. IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente. Está PROHIBIDO simular diálogos falsos introduciendo líneas que empiecen por 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código, scripts o comandos, envuélvelos OBLIGATORIAMENTE en bloques de código Markdown con su respectivo lenguaje de programación.`;
-    return res.json({ ok: true });
+  if (isSystem && idioma) {
+    idiomaActualSistema = idioma;
+    return res.json({ ok: true, idioma: idiomaActualSistema });
   }
 
   let mensajeFinal = mensaje;
@@ -74,10 +72,16 @@ app.post("/", async (req, res) => {
       historial.push("Usuario: " + mensajeFinal);
     }
   } else {
-    if (accion === "resumir")
-      mensajeFinal = "Haz un resumen muy breve de nuestra conversación hasta ahora.";
-    if (accion === "corregir")
-      mensajeFinal = "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
+    if (accion === "resumir") {
+      mensajeFinal = idiomaActualSistema === "Inglés" ? "Make a very brief summary of our conversation so far." : 
+                     idiomaActualSistema === "Francés" ? "Fais un résumé très bref de notre conversation jusqu'à présent." :
+                     "Haz un resumen muy breve de nuestra conversación hasta ahora.";
+    }
+    if (accion === "corregir") {
+      mensajeFinal = idiomaActualSistema === "Inglés" ? "Analyze my last message or code, fix errors and tell me how to improve it." :
+                     idiomaActualSistema === "Francés" ? "Analyse mon dernier message ou code, corrige les erreurs et dis-moi comment l'améliorer." :
+                     "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
+    }
 
     historial.push("Usuario: " + mensajeFinal);
   }
@@ -93,7 +97,9 @@ app.post("/", async (req, res) => {
     hour: "2-digit",
     minute: "2-digit",
   });
-  const instruccionesConFecha = `${systemPrompt}\n[Información del sistema: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. Usa estos datos únicamente si el usuario te pregunta por el tiempo]`;
+
+  const basePrompt = obtenerSystemPrompt(idiomaActualSistema);
+  const instruccionesConFecha = `${basePrompt}\n[Información del sistema: Hoy es ${fechaTxt} y la hora actual es ${horaTxt}. Usa estos datos únicamente si el usuario te pregunta por el tiempo o la fecha actual]`;
 
   const textoCompletoHistorial =
     instruccionesConFecha + "\n\n" + historial.join("\n") + "\nAsistente:";
@@ -138,7 +144,7 @@ app.post("/", async (req, res) => {
             respuestaCompleta += fragmentoLimpio;
             res.write(fragmentoLimpio);
           }
-        } catch (err) { /* Ignorar fragmentos corruptos */ }
+        } catch (err) { /* Ignorar chunks malformados */ }
       }
     });
 
@@ -148,6 +154,7 @@ app.post("/", async (req, res) => {
         fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
       }
 
+      // Autosave cronológico
       const año = ahora.getFullYear();
       const mes = String(ahora.getMonth() + 1).padStart(2, "0");
       const dia = String(ahora.getDate()).padStart(2, "0");
@@ -190,6 +197,7 @@ app.post("/", async (req, res) => {
 app.get("/current-tokens", (req, res) => {
   res.json({ totalAcumulado: calcularTokensTotalesHistorial() });
 });
+
 app.get("/get-historial", (req, res) => {
   res.json(historial);
 });
@@ -234,6 +242,25 @@ app.post("/load", (req, res) => {
   }
   fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
   res.sendStatus(200);
+});
+
+// Endpoint de importación local
+app.post("/import", (req, res) => {
+  const { contenido, nombreArchivo } = req.body;
+  try {
+    if (nombreArchivo.endsWith(".md")) {
+      historial = contenido.split("\n\n").filter((linea) => linea.trim() !== "");
+    } else {
+      historial = JSON.parse(contenido);
+    }
+    if (!Array.isArray(historial)) {
+      historial = [];
+    }
+    fs.writeFileSync(MEMORY_FILE, JSON.stringify(historial, null, 2));
+    res.sendStatus(200);
+  } catch (e) {
+    res.status(400).send("Formato inválido");
+  }
 });
 
 app.post("/delete", (req, res) => {
@@ -324,13 +351,17 @@ app.get("/", (req, res) => {
             code { font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; }
             .btn-copiar { display: inline-flex; align-items: center; justify-content: center; margin-top: 12px; background: var(--btn-copy-bg); color: var(--btn-copy-color); border: 1px solid var(--border); padding: 5px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
             .btn-copiar:hover { background: var(--primary) !important; color: #fff !important; border-color: var(--primary); }
-            .top-bar { padding: 10px 15px; background: var(--topbar); display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); min-height: 50px; }
+            .top-bar { padding: 10px 15px; background: var(--topbar); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); min-height: 50px; }
             .quick-actions { display: flex; gap: 8px; padding: 10px 20px 0 20px; margin-bottom: 10px; }
             .action-btn { font-size: 11px; padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 15px; cursor: pointer; opacity: 0.8; transition: 0.2s; }
             .action-btn:hover { background: var(--primary); color: white; border-color: var(--primary); opacity: 1; }
             .action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
             .controls { display: flex; gap: 10px; padding: 20px; background: var(--topbar); border-top: 1px solid var(--border); }
             input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
+            
+            .topbar-btn { background: #252525; border: 1px solid var(--border); color: var(--text); padding: 6px 12px; cursor: pointer; border-radius: 6px; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; transition: 0.2s; }
+            .topbar-btn:hover { background: var(--primary); color: white; border-color: var(--primary); }
+            
             button { background: var(--primary); color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 8px; font-weight: bold; transition: 0.2s; }
             button.btn-stop { background: #333 !important; }
             button.btn-stop:hover { background: #555 !important; }
@@ -366,9 +397,13 @@ app.get("/", (req, res) => {
                     <span id="tokenCounter">🔥 0 | 🧠 8192</span>
                     <button class="info-btn" onclick="abrirInfoTokens()">ⓘ</button>
                 </div>
-                <button onclick="toggleTheme()" id="themeBtn">🌙</button>
-                <button onclick="abrirMenuGuardar()">💾</button>
-                <button onclick="borrarActual()" style="background:#333">🗑</button>
+                <button class="topbar-btn" onclick="toggleTheme()" id="themeBtn">🌙</button>
+                
+                <button class="topbar-btn" id="btnTopbarImportar" onclick="activarInputImportar()">📥</button>
+                <input type="file" id="importFileInput" accept=".json,.md" style="display:none;" onchange="procesarArchivoImportado(this)">
+                
+                <button class="topbar-btn" id="btnTopbarGuardar" onclick="abrirMenuGuardar()">💾</button>
+                <button class="topbar-btn" onclick="borrarActual()" style="background:#333; color:#fff;" title="Borrar chat actual">🗑</button>
             </div>
             <div id="chat"></div>
             <div class="quick-actions">
@@ -426,16 +461,13 @@ app.get("/", (req, res) => {
             let usuarioHizoScrollArriba = false;
             let modoActualModal = 'guardar';
 
-            marked.use({
-                breaks: true,
-                gfm: true
-            });
+            marked.use({ breaks: true, gfm: true });
 
             function postProcesarBloquesCodigo(htmlInput) {
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = htmlInput;
                 
-                const idiomaActual = sessionStorage.getItem('idioma') || 'Español';
+                const idiomaActual = localStorage.getItem('idioma') || 'Español';
                 const textoBotonCc = textos[idiomaActual].copyCode || 'Copiar Código';
 
                 const pres = tempDiv.querySelectorAll('pre');
@@ -445,9 +477,7 @@ app.get("/", (req, res) => {
                         let clases = codeEl.className.split(' ');
                         let lenguaje = 'plaintext';
                         clases.forEach(c => {
-                            if (c.startsWith('language-')) {
-                                lenguaje = c.replace('language-', '');
-                            }
+                            if (c.startsWith('language-')) lenguaje = c.replace('language-', '');
                         });
 
                         const textoCodigo = codeEl.innerText;
@@ -510,7 +540,8 @@ app.get("/", (req, res) => {
                     copyCode: 'Copiar Código', labelFormato: 'Formato:',
                     opcionesTitle: '¿Qué quieres hacer?', opServidor: '💾 Guardar en Servidor', opExportar: '📥 Exportar al Ordenador',
                     infoBody: '🔥 <b>Tokens Consumidos:</b> Es el total de tokens acumulados en la sesión actual.<br><br>🧠 <b>Límite de Contexto (8192):</b> Es la memoria máxima que el modelo Llama3 puede recordar de forma simultánea.',
-                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar'
+                    btnResumir: '📝 Resumir', btnCorregir: '🛠 Corregir', btnRegenerar: '🔄 Regenerar',
+                    titleImportar: 'Importar archivo (.json / .md)', titleGuardar: 'Guardar o Exportar'
                 },
                 'Inglés': { 
                     send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing',
@@ -520,17 +551,19 @@ app.get("/", (req, res) => {
                     copyCode: 'Copy Code', labelFormato: 'Format:',
                     opcionesTitle: 'What do you want to do?', opServidor: '💾 Save to Server', opExportar: '📥 Export to Computer',
                     infoBody: '🔥 <b>Tokens Used:</b> Total tokens used in the current session.<br><br>🧠 <b>Context Limit (8192):</b> Maximum memory capacity that Llama3 model can handle at once.',
-                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate'
+                    btnResumir: '📝 Summarize', btnCorregir: '🛠 Fix Error', btnRegenerar: '🔄 Regenerate',
+                    titleImportar: 'Import file (.json / .md)', titleGuardar: 'Save or Export'
                 },
                 'Francés': { 
                     send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit',
-                    historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', exportTitle: 'Exporter sur l ordinateur', savePlaceholder: 'Nom',
+                    historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', exportTitle: 'Exporter sur l ordenador', savePlaceholder: 'Nom',
                     confirmSave: 'Enregistrer', confirmExport: 'Exporter', cancel: 'Annuler', deleteConfirm: 'Supprimer?',
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens',
                     copyCode: 'Copier le Code', labelFormato: 'Format:',
                     opcionesTitle: 'Que voulez-vous faire?', opServidor: '💾 Sauvegarder sur le Serveur', opExportar: '📥 Exporter sur l Ordinateur',
-                    infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 peut traiter.',
-                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer'
+                    infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 puede traiter.',
+                    btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer',
+                    titleImportar: 'Importer un fichier (.json / .md)', titleGuardar: 'Enregistrer ou Exporter'
                 }
             };
 
@@ -544,7 +577,7 @@ app.get("/", (req, res) => {
             }
 
             function aplicarTraducciones() {
-                const lang = sessionStorage.getItem('idioma') || 'Español';
+                const lang = localStorage.getItem('idioma') || 'Español';
                 const t = textos[lang];
                 document.getElementById('btnEnviar').innerText = isGenerating ? t.stop : t.send;
                 document.getElementById('input').placeholder = t.placeholder;
@@ -559,8 +592,12 @@ app.get("/", (req, res) => {
 
                 document.getElementById('txtOpcionesTitle').innerText = t.opcionesTitle;
                 document.getElementById('btnOpGuardarServidor').innerText = t.opServidor;
-                document.getElementById('btnOpExportarPC').innerText = t.opExportar;
+                document.getElementById('btnOpExportarPC').innerText = t.opexportar || t.opExportar;
                 document.getElementById('btnOpCancelar').innerText = t.cancel;
+
+                // Forzar los títulos dinámicos con emojis en la barra superior
+                document.getElementById('btnTopbarImportar').setAttribute('title', t.titleImportar);
+                document.getElementById('btnTopbarGuardar').setAttribute('title', t.titleGuardar);
 
                 if (modoActualModal === 'exportar') {
                     document.getElementById('txtSaveTitle').innerText = t.exportTitle;
@@ -570,12 +607,8 @@ app.get("/", (req, res) => {
                     document.getElementById('btnConfirmSave').innerText = t.confirmSave;
                 }
 
-                document.querySelectorAll('.btn-copiar').forEach(btn => {
-                    btn.innerText = t.copy;
-                });
-                document.querySelectorAll('.btn-copiar-codigo').forEach(btn => {
-                    btn.innerText = t.copyCode;
-                });
+                document.querySelectorAll('.btn-copiar').forEach(btn => { btn.innerText = t.copy; });
+                document.querySelectorAll('.btn-copiar-codigo').forEach(btn => { btn.innerText = t.copyCode; });
             }
 
             function manejadorBotonPrincipal() { if(isGenerating) { cancelarRespuesta(); } else { enviar(); } }
@@ -587,7 +620,7 @@ app.get("/", (req, res) => {
 
                 const input = document.getElementById('input');
                 const btn = document.getElementById('btnEnviar');
-                const lang = sessionStorage.getItem('idioma') || 'Español';
+                const lang = localStorage.getItem('idioma') || 'Español';
                 document.getElementById('btnActionResumir').disabled = generando;
                 document.getElementById('btnActionCorregir').disabled = generando;
 
@@ -599,14 +632,14 @@ app.get("/", (req, res) => {
             }
 
             function abrirInfoTokens() {
-                const lang = sessionStorage.getItem('idioma') || 'Español';
+                const lang = localStorage.getItem('idioma') || 'Español';
                 document.getElementById('txtInfoBody').innerHTML = textos[lang].infoBody;
                 document.getElementById('overlay').style.display = 'block';
                 document.getElementById('modalInfo').style.display = 'block';
             }
 
             function copiarTextoElemento(btn, textoRaw) {
-                const lang = sessionStorage.getItem('idioma') || 'Español';
+                const lang = localStorage.getItem('idioma') || 'Español';
                 navigator.clipboard.writeText(textoRaw).then(() => {
                     btn.innerText = textos[lang].copied;
                     setTimeout(() => { btn.innerText = textos[lang].copy; }, 2000);
@@ -657,7 +690,7 @@ app.get("/", (req, res) => {
 
             function renderChat() {
                 const chatDiv = document.getElementById('chat');
-                const lang = sessionStorage.getItem('idioma') || 'Español';
+                const lang = localStorage.getItem('idioma') || 'Español';
                 chatDiv.innerHTML = "";
 
                 let mensajesVisibles = rawHistorial.filter(m => !m.startsWith('Sistema:'));
@@ -717,7 +750,7 @@ app.get("/", (req, res) => {
                 const input = document.getElementById('input');
                 const chatDiv = document.getElementById('chat');
                 const msg = input.value;
-                const lang = sessionStorage.getItem('idioma') || 'Español';
+                const lang = localStorage.getItem('idioma') || 'Español';
 
                 if(!accion && !msg) return;
                 cambiarEstadoControles(true);
@@ -748,7 +781,9 @@ app.get("/", (req, res) => {
                     rawHistorial.push("Usuario: " + msg);
                     input.value = "";
                 } else {
-                    rawHistorial.push("Usuario: " + (accion === 'resumir' ? '📝 Resumir...' : '🛠 Corregir...'));
+                    let textoAccionVisible = '📝 Resumir...';
+                    if (accion === 'corregir') textoAccionVisible = '🛠 Corregir...';
+                    rawHistorial.push("Usuario: " + textoAccionVisible);
                 }
 
                 renderChat();
@@ -767,8 +802,7 @@ app.get("/", (req, res) => {
                         body: JSON.stringify({
                             mensaje: accion === 'editar' ? textoEditado : msg,
                             accion: accion,
-                            indexEdicion: indexEdicion,
-                            newSystemPrompt: "Eres un asistente de IA útil, conciso y preciso. Responde siempre en " + lang + ". IMPORTANTE: Genera ÚNICAMENTE la respuesta del Asistente fluidamente. Está TERMINANTEMENTE PROHIBIDO imitar al usuario o inventar líneas que simulen ser parte del chat histórico como 'Usuario:', 'Asistente:' o 'Sistema:'. Si vas a mostrar código o scripts, usa siempre bloques de código Markdown con su respectivo lenguaje."
+                            indexEdicion: indexEdicion
                         }),
                         signal: abortController.signal
                     });
@@ -828,9 +862,55 @@ app.get("/", (req, res) => {
                 });
             }
 
+            function activarInputImportar() {
+                if (isGenerating) return;
+                document.getElementById('importFileInput').click();
+            }
+
+            function procesarArchivoImportado(input) {
+                const file = input.files[0];
+                if (!file) return;
+
+                const lector = new FileReader();
+                lector.onload = async function(e) {
+                    const contenidoTexto = e.target.result;
+                    try {
+                        const response = await fetch('/import', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                nombreArchivo: file.name,
+                                contenido: contenidoTexto
+                            })
+                        });
+
+                        if (response.ok) {
+                            const lang = localStorage.getItem('idioma') || 'Español';
+                            await fetch('/', { 
+                                method: 'POST', 
+                                headers: {'Content-Type': 'application/json'}, 
+                                body: JSON.stringify({ idioma: lang, isSystem: true }) 
+                            });
+                            location.reload();
+                        } else {
+                            alert("Error al importar el archivo.");
+                        }
+                    } catch (err) {
+                        alert("Error en la conexión con el servidor.");
+                    }
+                };
+                lector.readAsText(file);
+                input.value = "";
+            }
+
             function setLang(lang) {
-                sessionStorage.setItem('idioma', lang);
-                fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ mensaje: "Responde siempre en " + lang, isSystem: true }) }).then(() => location.reload());
+                localStorage.setItem('idioma', lang);
+                sessionStorage.setItem('idioma_elegido_sesion', 'true'); // Marca que ya se preguntó en esta sesión
+                fetch('/', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({ idioma: lang, isSystem: true }) 
+                }).then(() => location.reload());
             }
 
             function toggleMenu() {
@@ -849,10 +929,7 @@ app.get("/", (req, res) => {
                 modoActualModal = 'guardar';
                 document.getElementById('modalGuardarOpciones').style.display = 'none';
                 document.getElementById('nombreArchivo').value = "";
-                
-                // 🔹 OCULTAR el desplegable del tipo de formato al guardar en servidor
                 document.getElementById('contenedorFormato').style.display = 'none';
-                
                 aplicarTraducciones();
                 document.getElementById('modalGuardar').style.display = 'block';
             }
@@ -861,10 +938,7 @@ app.get("/", (req, res) => {
                 modoActualModal = 'exportar';
                 document.getElementById('modalGuardarOpciones').style.display = 'none';
                 document.getElementById('nombreArchivo').value = "conversacion";
-                
-                // 🔹 MOSTRAR el desplegable del tipo de formato para exportar al PC
                 document.getElementById('contenedorFormato').style.display = 'block';
-                
                 aplicarTraducciones();
                 document.getElementById('modalGuardar').style.display = 'block';
             }
@@ -899,12 +973,21 @@ app.get("/", (req, res) => {
 
             function borrarActual() {
                 if(!isGenerating) {
-                    fetch('/clear', {method:'POST'}).then(() => location.reload());
+                    fetch('/clear', {method:'POST'}).then(() => {
+                        const lang = localStorage.getItem('idioma') || 'Español';
+                        fetch('/', { 
+                            method: 'POST', 
+                            headers: {'Content-Type': 'application/json'}, 
+                            body: JSON.stringify({ idioma: lang, isSystem: true }) 
+                        }).then(() => location.reload());
+                    });
                 }
             }
 
             async function cargarFile(n, t) {
                 await fetch('/load', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name:n, type:t}) });
+                const lang = localStorage.getItem('idioma') || 'Español';
+                await fetch('/', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ idioma: lang, isSystem: true }) });
                 location.reload();
             }
 
@@ -915,7 +998,6 @@ app.get("/", (req, res) => {
 
             async function confirmarGuardadoManual() {
                 const n = document.getElementById('nombreArchivo').value.trim();
-                // 🔹 Al guardar en servidor, siempre forzamos el formato 'json' por defecto
                 const f = 'json'; 
                 if(!n) return;
                 await fetch('/save-manual', {
@@ -934,12 +1016,22 @@ app.get("/", (req, res) => {
                 cambiarEstadoControles(false);
                 actualizarContadorTokensDesdeServidor();
                 renderChat();
-                aplicarTraducciones();
                 
-                const idioma = sessionStorage.getItem('idioma');
-                if(!idioma || idioma === "null") {
+                // Cambiamos a sessionStorage la comprobación inicial: 
+                // Si es una pestaña nueva, obligará a elegir idioma.
+                const idiomaSesion = sessionStorage.getItem('idioma_elegido_sesion');
+                const idiomaConfigurado = localStorage.getItem('idioma');
+
+                if(!idiomaSesion || !idiomaConfigurado) {
                     document.getElementById('overlay').style.display = 'block';
                     document.getElementById('modalIdioma').style.display = 'block';
+                } else {
+                    await fetch('/', { 
+                        method: 'POST', 
+                        headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({ idioma: idiomaConfigurado, isSystem: true }) 
+                    });
+                    aplicarTraducciones();
                 }
             };
         </script>
@@ -948,4 +1040,4 @@ app.get("/", (req, res) => {
   `);
 });
 
-app.listen(PORT, () => console.log("Use the toggle button to open the chat panel."));
+app.listen(PORT, () => console.log(`Servidor iniciado en http://localhost:${PORT}`));
