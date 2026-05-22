@@ -560,7 +560,7 @@ app.get("/", (req, res) => {
                     confirmSave: 'Enregistrer', confirmExport: 'Exporter', cancel: 'Annuler', deleteConfirm: 'Supprimer?',
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens',
                     copyCode: 'Copier le Code', labelFormato: 'Format:',
-                    opcionesTitle: 'Que voulez-vous faire?', opServidor: '💾 Sauvegarder sur le Serveur', opExportar: '📥 Exporter sur l Ordinateur',
+                    opcionesTitle: 'Que voulez-vous faire?', opServidor: '💾 Sauvegarder sur le Serveur', opExportar: "📥 Exporter sur l'Ordinateur",
                     infoBody: '🔥 <b>Tokens Utilisés:</b> Total des tokens de la session.<br><br>🧠 <b>Limite de Contexte (8192):</b> Mémoire maximale que le modèle Llama3 puede traiter.',
                     btnResumir: '📝 Résumer', btnCorregir: '🛠 Corriger', btnRegenerar: '🔄 Régénérer',
                     titleImportar: 'Importer un fichier (.json / .md)', titleGuardar: 'Enregistrer ou Exporter'
