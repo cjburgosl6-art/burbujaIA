@@ -399,13 +399,15 @@ app.get("/", (req, res) => {
         <div id="modalGuardar" class="modal">
             <h3 id="txtSaveTitle">Guardar</h3>
             <input id="nombreArchivo" style="width:100%; margin-bottom:15px; box-sizing:border-box;">
-            <div style="margin-bottom: 15px; text-align: left;">
+            
+            <div id="contenedorFormato" style="margin-bottom: 15px; text-align: left;">
                 <label id="lblFormato" style="font-size: 11px; opacity: 0.8;">Formato:</label>
                 <select id="formatoArchivo" style="width: 100%; padding: 8px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; margin-top: 5px; font-size: 12px;">
                     <option value="json">JSON (.json)</option>
                     <option value="md">Markdown (.md)</option>
                 </select>
             </div>
+            
             <button id="btnConfirmSave" onclick="procesarGuardadoOExportado()" style="width:100%"></button>
             <button id="btnCancelSave" onclick="closeAll()" style="width:100%; margin-top:10px; background:#444; color:white;"></button>
         </div>
@@ -555,7 +557,6 @@ app.get("/", (req, res) => {
                 document.getElementById('btnActionRegenerar').innerText = t.btnRegenerar;
                 document.getElementById('lblFormato').innerText = t.labelFormato;
 
-                // ✅ NUEVO: Traducir dinámicamente el modal de opciones iniciales de guardado
                 document.getElementById('txtOpcionesTitle').innerText = t.opcionesTitle;
                 document.getElementById('btnOpGuardarServidor').innerText = t.opServidor;
                 document.getElementById('btnOpExportarPC').innerText = t.opExportar;
@@ -839,7 +840,7 @@ app.get("/", (req, res) => {
 
             function abrirMenuGuardar() {
                 if (isGenerating) return;
-                aplicarTraducciones(); // Se asegura de que se apliquen las traducciones correspondientes antes de abrir
+                aplicarTraducciones();
                 document.getElementById('overlay').style.display = 'block';
                 document.getElementById('modalGuardarOpciones').style.display = 'block';
             }
@@ -848,6 +849,10 @@ app.get("/", (req, res) => {
                 modoActualModal = 'guardar';
                 document.getElementById('modalGuardarOpciones').style.display = 'none';
                 document.getElementById('nombreArchivo').value = "";
+                
+                // 🔹 OCULTAR el desplegable del tipo de formato al guardar en servidor
+                document.getElementById('contenedorFormato').style.display = 'none';
+                
                 aplicarTraducciones();
                 document.getElementById('modalGuardar').style.display = 'block';
             }
@@ -856,6 +861,10 @@ app.get("/", (req, res) => {
                 modoActualModal = 'exportar';
                 document.getElementById('modalGuardarOpciones').style.display = 'none';
                 document.getElementById('nombreArchivo').value = "conversacion";
+                
+                // 🔹 MOSTRAR el desplegable del tipo de formato para exportar al PC
+                document.getElementById('contenedorFormato').style.display = 'block';
+                
                 aplicarTraducciones();
                 document.getElementById('modalGuardar').style.display = 'block';
             }
@@ -906,7 +915,8 @@ app.get("/", (req, res) => {
 
             async function confirmarGuardadoManual() {
                 const n = document.getElementById('nombreArchivo').value.trim();
-                const f = document.getElementById('formatoArchivo').value;
+                // 🔹 Al guardar en servidor, siempre forzamos el formato 'json' por defecto
+                const f = 'json'; 
                 if(!n) return;
                 await fetch('/save-manual', {
                     method: 'POST',

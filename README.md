@@ -1,1 +1,1 @@
-Quitar que me pregunte el tipo de archivo al guardar, pero mantenerlo en exportar
+ahora solo falta importar
