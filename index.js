@@ -854,6 +854,7 @@ app.get("/", (req, res) => {
                 const list = document.getElementById('fileList');
                 list.innerHTML = "";
                 const archivosFiltrados = allFiles.filter(f => f.type === pestañaActiva);
+                
                 archivosFiltrados.reverse().forEach(archivo => {
                     const item = document.createElement('div');
                     item.className = 'file-item';
@@ -861,8 +862,13 @@ app.get("/", (req, res) => {
 
                     item.innerHTML = '<span class="' + tagClass + '">' + archivo.type + '</span><span class="file-link-name" style="flex:1; cursor:pointer; word-break: break-all; white-space: normal;"></span><span class="btn-delete-file" style="cursor:pointer; padding-left:10px;">🗑</span>';
 
+                    // 🔹 LIMPIEZA VISUAL: Quitamos el .json o .md del texto que ve el usuario
+                    const nombreLimpio = archivo.name.replace(/\.json$/i, '').replace(/\.md$/i, '');
+
                     const linkSpan = item.querySelector('.file-link-name');
-                    linkSpan.innerText = archivo.name;
+                    linkSpan.innerText = nombreLimpio; // Muestra el nombre estético sin extensión
+                    
+                    // IMPORTANTE: Al hacer clic o borrar, seguimos enviando "archivo.name" real (con su extensión) al servidor
                     linkSpan.onclick = () => !isGenerating && cargarFile(archivo.name, archivo.type);
                     item.querySelector('.btn-delete-file').onclick = () => !isGenerating && borrarFile(archivo.name, archivo.type);
                     list.appendChild(item);
