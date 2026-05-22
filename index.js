@@ -399,7 +399,6 @@ app.get("/", (req, res) => {
                 </div>
                 <button class="topbar-btn" onclick="toggleTheme()" id="themeBtn">🌙</button>
                 
-                <button class="topbar-btn" id="btnTopbarImportar" onclick="activarInputImportar()">📥</button>
                 <input type="file" id="importFileInput" accept=".json,.md" style="display:none;" onchange="procesarArchivoImportado(this)">
                 
                 <button class="topbar-btn" id="btnTopbarGuardar" onclick="abrirMenuGuardar()">💾</button>
@@ -427,7 +426,8 @@ app.get("/", (req, res) => {
         <div id="modalGuardarOpciones" class="modal">
             <h3 id="txtOpcionesTitle" style="color:var(--primary)">¿Qué quieres hacer?</h3>
             <button id="btnOpGuardarServidor" style="width:100%; margin:5px 0;" onclick="irGuardar()">💾 Guardar en Servidor</button>
-            <button id="btnOpExportarPC" style="width:100%; margin:5px 0; background:#2a9d8f;" onclick="irExportar()">📥 Exportar al Ordenador</button>
+            <button id="btnOpExportarPC" style="width:100%; margin:5px 0; background:#2a9d8f;" onclick="irExportar()">📤 Exportar al Ordenador</button>
+            <button id="btnOpImportarArchivo" style="width:100%; margin:5px 0; background:#f4a261;" onclick="closeAll(); activarInputImportar();">📥 Importar Archivo (.json/.md)</button>
             <button id="btnOpCancelar" style="width:100%; margin-top:10px; background:#444; color:white;" onclick="closeAll()">Cancelar</button>
         </div>
 
@@ -595,8 +595,15 @@ app.get("/", (req, res) => {
                 document.getElementById('btnOpExportarPC').innerText = t.opexportar || t.opExportar;
                 document.getElementById('btnOpCancelar').innerText = t.cancel;
 
-                // Forzar los títulos dinámicos con emojis en la barra superior
-                document.getElementById('btnTopbarImportar').setAttribute('title', t.titleImportar);
+                // Traducir el nuevo botón dentro del modal según el idioma
+                const btnImp = document.getElementById('btnOpImportarArchivo');
+                if (btnImp) {
+                    btnImp.innerText = lang === 'Inglés' ? '📥 Import File (.json/.md)' :
+                                       lang === 'Francés' ? '📥 Importer un fichier (.json/.md)' :
+                                       '📥 Importar Archivo (.json/.md)';
+                }
+
+                // Forzar el título dinámico con emoji en la barra superior para el disquete
                 document.getElementById('btnTopbarGuardar').setAttribute('title', t.titleGuardar);
 
                 if (modoActualModal === 'exportar') {
@@ -1040,4 +1047,4 @@ app.get("/", (req, res) => {
   `);
 });
 
-app.listen(PORT, () => console.log(`Servidor iniciado en http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Use the toggle button to start the chat`));

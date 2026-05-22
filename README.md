@@ -1,1 +1,1 @@
-ahora solo falta importar
+quitar el formato de los historiales
