@@ -1,1 +1,0 @@
-quitar el formato de los historiales
