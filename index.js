@@ -32,7 +32,7 @@ function calcularTokensTotalesHistorial() {
   return encode(textoCompleto).length;
 }
 
-/* --- API --- */
+/* --- API PRINCIPAL --- */
 app.post("/", async (req, res) => {
   const { mensaje, isSystem, idioma, accion, indexEdicion } = req.body;
 
@@ -81,6 +81,44 @@ app.post("/", async (req, res) => {
       mensajeFinal = idiomaActualSistema === "Inglés" ? "Analyze my last message or code, fix errors and tell me how to improve it." :
                      idiomaActualSistema === "Francés" ? "Analyse mon dernier message ou code, corrige les erreurs et dis-moi comment l'améliorer." :
                      "Analiza mi último mensaje o código, corrige errores y dime cómo mejorarlo.";
+    }
+
+    /* 🔍 INTERCEPTOR Y DETECCIÓN AUTOMÁTICA DE URL NATIVA */
+    const regexUrl = /(https?:\/\/[^\s]+)/g;
+    const urlsEncontradas = mensajeFinal.match(regexUrl);
+
+    if (urlsEncontradas && urlsEncontradas.length > 0) {
+      const urlAInterplanar = urlsEncontradas[0]; // Extrae la primera URL válida
+      console.log(`[Auto-Fetch] URL detectada en el mensaje enviado. Procesando: ${urlAInterplanar}`);
+      
+      try {
+        const webResponse = await axios.get(urlAInterplanar, {
+          headers: { 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+          },
+          timeout: 8000 // 8 segundos de margen de carga
+        });
+        
+        if (webResponse.data && typeof webResponse.data === "string") {
+          let textoWeb = webResponse.data
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '') // Quita scripts
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')   // Quita estilos CSS
+            .replace(/<[^>]*>/g, ' ')                         // Limpia etiquetas HTML
+            .replace(/\s+/g, ' ')                             // Reduce espaciados
+            .trim();
+
+          if (textoWeb) {
+            // Ajustamos límite prudente para no desbordar el contexto base de Llama3
+            textoWeb = textoWeb.substring(0, 16000);
+            
+            // Adjuntamos sutilmente el contenido como una instrucción del sistema
+            mensajeFinal += `\n\n[Información del sistema: El servidor local ha accedido a la URL compartida por el usuario y este es su contenido de texto plano extraído de forma segura para que puedas responder a su petición]:\n${textoWeb}`;
+          }
+        }
+      } catch (err) {
+        console.error("Error en auto-fetch nativo:", err.message);
+        mensajeFinal += `\n\n[Sistema: No se pudo acceder al enlace automáticamente. Detalle: ${err.message}]`;
+      }
     }
 
     historial.push("Usuario: " + mensajeFinal);
@@ -244,7 +282,6 @@ app.post("/load", (req, res) => {
   res.sendStatus(200);
 });
 
-// Endpoint de importación local
 app.post("/import", (req, res) => {
   const { contenido, nombreArchivo } = req.body;
   try {
@@ -356,6 +393,7 @@ app.get("/", (req, res) => {
             .action-btn { font-size: 11px; padding: 6px 12px; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 15px; cursor: pointer; opacity: 0.8; transition: 0.2s; }
             .action-btn:hover { background: var(--primary); color: white; border-color: var(--primary); opacity: 1; }
             .action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
             .controls { display: flex; gap: 10px; padding: 20px; background: var(--topbar); border-top: 1px solid var(--border); }
             input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 12px; border-radius: 8px; }
             
@@ -533,7 +571,7 @@ app.get("/", (req, res) => {
 
             const textos = {
                 'Español': { 
-                    send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo...', pensando: 'Escribiendo',
+                    send: 'Enviar', stop: '⏹ Detener', placeholder: 'Escribe algo o pega una URL...', pensando: 'Escribiendo',
                     historial: 'HISTORIAL', saveTitle: 'Guardar conversación', exportTitle: 'Exportar al ordenador', savePlaceholder: 'Nombre del archivo',
                     confirmSave: 'Guardar ahora', confirmExport: 'Exportar ahora', cancel: 'Cancelar', deleteConfirm: '¿Borrar archivo?',
                     copy: 'Copiar Mensaje', copied: '¡Copiado!', infoTitle: 'Contador de Tokens',
@@ -544,7 +582,7 @@ app.get("/", (req, res) => {
                     titleImportar: 'Importar archivo (.json / .md)', titleGuardar: 'Guardar o Exportar'
                 },
                 'Inglés': { 
-                    send: 'Send', stop: '⏹ Stop', placeholder: 'Type something...', pensando: 'Typing',
+                    send: 'Send', stop: '⏹ Stop', placeholder: 'Type something or paste a URL...', pensando: 'Typing',
                     historial: 'HISTORY', saveTitle: 'Save conversation', exportTitle: 'Export to computer', savePlaceholder: 'File name',
                     confirmSave: 'Save now', confirmExport: 'Export now', cancel: 'Cancel', deleteConfirm: 'Delete file?',
                     copy: 'Copy Message', copied: 'Copied!', infoTitle: 'Token Counter',
@@ -555,7 +593,7 @@ app.get("/", (req, res) => {
                     titleImportar: 'Import file (.json / .md)', titleGuardar: 'Save or Export'
                 },
                 'Francés': { 
-                    send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez...', pensando: 'Écrit',
+                    send: 'Envoyer', stop: '⏹ Arrêter', placeholder: 'Écrivez ou collez une URL...', pensando: 'Écrit',
                     historial: 'HISTORIQUE', saveTitle: 'Enregistrer le chat', exportTitle: 'Exporter sur l ordenador', savePlaceholder: 'Nom',
                     confirmSave: 'Enregistrer', confirmExport: 'Exporter', cancel: 'Annuler', deleteConfirm: 'Supprimer?',
                     copy: 'Copier', copied: 'Copié!', infoTitle: 'Tokens',
@@ -595,7 +633,6 @@ app.get("/", (req, res) => {
                 document.getElementById('btnOpExportarPC').innerText = t.opexportar || t.opExportar;
                 document.getElementById('btnOpCancelar').innerText = t.cancel;
 
-                // Traducir el nuevo botón dentro del modal según el idioma
                 const btnImp = document.getElementById('btnOpImportarArchivo');
                 if (btnImp) {
                     btnImp.innerText = lang === 'Inglés' ? '📥 Import File (.json/.md)' :
@@ -603,7 +640,6 @@ app.get("/", (req, res) => {
                                        '📥 Importar Archivo (.json/.md)';
                 }
 
-                // Forzar el título dinámico con emoji en la barra superior para el disquete
                 document.getElementById('btnTopbarGuardar').setAttribute('title', t.titleGuardar);
 
                 if (modoActualModal === 'exportar') {
@@ -862,13 +898,11 @@ app.get("/", (req, res) => {
 
                     item.innerHTML = '<span class="' + tagClass + '">' + archivo.type + '</span><span class="file-link-name" style="flex:1; cursor:pointer; word-break: break-all; white-space: normal;"></span><span class="btn-delete-file" style="cursor:pointer; padding-left:10px;">🗑</span>';
 
-                    // 🔹 LIMPIEZA VISUAL: Quitamos el .json o .md del texto que ve el usuario
                     const nombreLimpio = archivo.name.replace(/\.json$/i, '').replace(/\.md$/i, '');
 
                     const linkSpan = item.querySelector('.file-link-name');
-                    linkSpan.innerText = nombreLimpio; // Muestra el nombre estético sin extensión
+                    linkSpan.innerText = nombreLimpio;
                     
-                    // IMPORTANTE: Al hacer clic o borrar, seguimos enviando "archivo.name" real (con su extensión) al servidor
                     linkSpan.onclick = () => !isGenerating && cargarFile(archivo.name, archivo.type);
                     item.querySelector('.btn-delete-file').onclick = () => !isGenerating && borrarFile(archivo.name, archivo.type);
                     list.appendChild(item);
@@ -918,7 +952,7 @@ app.get("/", (req, res) => {
 
             function setLang(lang) {
                 localStorage.setItem('idioma', lang);
-                sessionStorage.setItem('idioma_elegido_sesion', 'true'); // Marca que ya se preguntó en esta sesión
+                sessionStorage.setItem('idioma_elegido_sesion', 'true');
                 fetch('/', { 
                     method: 'POST', 
                     headers: {'Content-Type': 'application/json'}, 
@@ -1030,8 +1064,6 @@ app.get("/", (req, res) => {
                 actualizarContadorTokensDesdeServidor();
                 renderChat();
                 
-                // Cambiamos a sessionStorage la comprobación inicial: 
-                // Si es una pestaña nueva, obligará a elegir idioma.
                 const idiomaSesion = sessionStorage.getItem('idioma_elegido_sesion');
                 const idiomaConfigurado = localStorage.getItem('idioma');
 
